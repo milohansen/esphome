@@ -148,3 +148,8 @@ sdkconfig.*
 /managed_components
 
 api-docs/
+
+
+# Added by cargo
+
+/target

@@ -596,6 +596,12 @@ class EsphomeCore:
         # Dict to track platform entity counts for pre-allocation
         # Key: platform name (e.g. "sensor", "binary_sensor"), Value: count
         self.platform_counts: defaultdict[str, int] = defaultdict(int)
+        # List of IDs for components implemented in Rust
+        self.rust_component_ids: list[str] = []
+        # List of IDs for Rust components referenced by C++ code
+        self.rust_referenced_by_cpp: list[str] = []
+        # List of registered components (MockObj)
+        self.registered_components: list[MockObj] = []
         # Track entity unique IDs to handle duplicates
         # Dict mapping (device_id, platform, sanitized_name) -> entity metadata
         self.unique_ids: dict[tuple[str, str, str], EntityMetadata] = {}
@@ -634,6 +640,8 @@ class EsphomeCore:
         self.defines = set()
         self.platformio_options = {}
         self.loaded_integrations = set()
+        self.rust_component_ids = []
+        self.registered_components = []
         self.component_ids = set()
         self.platform_counts = defaultdict(int)
         self.unique_ids = {}
@@ -782,6 +790,11 @@ class EsphomeCore:
     @property
     def is_esp32(self):
         return self.target_platform == PLATFORM_ESP32
+
+    @property
+    def is_esp32_c3(self):
+        variant = self.data.get("esp32", {}).get("variant")
+        return self.is_esp32 and variant in ("esp32c3", "ESP32C3")
 
     @property
     def is_rp2040(self):
@@ -937,6 +950,9 @@ class EsphomeCore:
     async def get_variable(self, id) -> "MockObj":
         if not isinstance(id, ID):
             raise ValueError(f"ID {id!r} must be of type ID!")
+        if str(id) in self.rust_component_ids:
+            if str(id) not in self.rust_referenced_by_cpp:
+                self.rust_referenced_by_cpp.append(str(id))
         # Fast path, check if already registered without awaiting
         if id in self.variables:
             return self.variables[id]
@@ -954,6 +970,9 @@ class EsphomeCore:
     async def get_variable_with_full_id(self, id: ID) -> tuple[ID, "MockObj"]:
         if not isinstance(id, ID):
             raise ValueError(f"ID {id!r} must be of type ID!")
+        if str(id) in self.rust_component_ids:
+            if str(id) not in self.rust_referenced_by_cpp:
+                self.rust_referenced_by_cpp.append(str(id))
         return await _FakeAwaitable(self._get_variable_with_full_id_generator(id))
 
     def register_variable(self, id, obj):
