@@ -32,6 +32,11 @@ if [ -x "$(command -v rustup)" ]; then
     echo "Installing espflash..."
     cargo install espflash
   fi
+  # Check for libclang
+  if ! [ -f /usr/lib/x86_64-linux-gnu/libclang.so ] && ! [ -f /usr/lib/libclang.so ] && ! [ -x "$(command -v llvm-config)" ]; then
+    echo "Warning: libclang not found. bindgen (used in Rust migration) might fail."
+    echo "On Ubuntu/Debian, try: sudo apt install libclang-dev"
+  fi
 else
   echo "Warning: rustup not found. Rust components will not be buildable."
   echo "Please install Rust from https://rustup.rs/"

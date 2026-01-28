@@ -152,4 +152,4 @@ api-docs/
 
 # Added by cargo
 
-embhome/target
+/target

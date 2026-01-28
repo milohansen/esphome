@@ -16,6 +16,10 @@ To build and run this project, you need the following tools installed:
         ```bash
         cargo install espflash
         ```
+    *   **LLVM/Clang**: `bindgen` requires `libclang` to be installed on your system.
+        *   Ubuntu/Debian: `sudo apt install libclang-dev`
+        *   macOS: `brew install llvm`
+        *   Windows: `winget install -e --id LLVM.LLVM`
 
 2.  **Python & ESPHome**:
     *   Python 3.9 or newer.
