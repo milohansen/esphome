@@ -547,6 +547,11 @@ def compile_program(args: ArgsProtocol, config: ConfigType) -> int:
     # If you change this format, update the regex in that script as well
     _LOGGER.info("Compiling app... Build path: %s", CORE.build_path)
 
+    if CORE.is_esp32_c3:
+        import subprocess
+        _LOGGER.info("Running Cargo-First build...")
+        return subprocess.call(["cargo", "build", "--release"], cwd="embhome")
+
     if native_idf and CORE.is_esp32 and CORE.target_framework == "esp-idf":
         from esphome import espidf_api
 

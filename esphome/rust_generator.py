@@ -117,12 +117,13 @@ def generate_main_rs():
 
 def write_rust_project():
     _LOGGER.info("Writing Rust project artifacts...")
-    # This would be called from writer.py
-    # For now, let's just use the current directory/embhome
+    # The embhome directory should be in the root of the repo.
+    # We use Path.cwd() to find it, assuming esphome is run from the root.
     from pathlib import Path
-    base_path = Path("embhome/src")
+    root_path = Path.cwd()
+    base_path = root_path / "embhome" / "src"
 
     write_file_if_changed(base_path / "bridge.rs", generate_bridge_rs())
     write_file_if_changed(base_path / "main.rs", generate_main_rs())
     # bridge.cpp goes into the C++ side of the build
-    write_file_if_changed(Path("embhome/bridge.cpp"), generate_bridge_cpp())
+    write_file_if_changed(root_path / "embhome" / "bridge.cpp", generate_bridge_cpp())

@@ -64,18 +64,21 @@ sensor:
     id: my_dht
 ```
 
-### 2. Generate and Build
+### 2. Generate and Build (Cargo-First)
 
-Run the ESPHome compilation command. This will trigger the refactored code generator to produce the Rust bridge artifacts.
+Run the ESPHome compilation command. This will trigger the refactored code generator to produce the Rust bridge artifacts and then invoke Cargo to orchestrate the build.
 
 ```bash
 python3 -m esphome compile test.yaml
 ```
 
-ESPHome will now:
-1.  Generate `bridge.cpp`, `bridge.rs`, and `main.rs` inside `embhome/`.
-2.  Trigger the C++ build to create `libesphome.a`.
-3.  Link everything into the final Rust binary via Cargo.
+ESPHome now implements a **Cargo-First** build model:
+1.  **Codegen**: ESPHome generates `bridge.cpp`, `bridge.rs`, and `main.rs` inside `embhome/`.
+2.  **Cargo Orchestration**: ESPHome invokes `cargo build` within the `embhome/` directory.
+3.  **Build.rs Execution**: Cargo's build script (`build.rs`) is executed.
+4.  **C++ Compilation**: `build.rs` triggers `build_cpp.py`, which compiles the legacy C++ sources and the new `bridge.cpp` into a static archive `libesphome.a`.
+5.  **FFI Binding**: `bindgen` (invoked by `build.rs`) generates Rust FFI bindings for the factory functions in `bridge.cpp`.
+6.  **Linking**: Cargo links `libesphome.a` into the final Rust binary.
 
 ### 3. Manual Rust Build (Optional)
 

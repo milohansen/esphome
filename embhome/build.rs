@@ -1,11 +1,21 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Trigger the C++ build (e.g., via a helper script or directly)
-    // For this migration, we assume the C++ side is built into a static library
+    // Trigger the C++ build
+    println!("cargo:rerun-if-changed=build_cpp.py");
+    let status = Command::new("python3")
+        .arg("build_cpp.py")
+        .status()
+        .expect("Failed to execute build_cpp.py");
+
+    if !status.success() {
+        panic!("build_cpp.py failed");
+    }
+
     println!("cargo:rustc-link-search=native={}", env::var("CARGO_MANIFEST_DIR").unwrap());
     println!("cargo:rustc-link-lib=static=esphome");
 
