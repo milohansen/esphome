@@ -118,6 +118,7 @@ class ArgsProtocol(Protocol):
     name: str
     upload_speed: str | None
     native_idf: bool
+    rust: bool
 
 
 def choose_prompt(options, purpose: str = None):
@@ -829,12 +830,19 @@ def command_vscode(args: ArgsProtocol) -> int | None:
 
 def command_compile(args: ArgsProtocol, config: ConfigType) -> int | None:
     native_idf = getattr(args, "native_idf", False)
+    rust = getattr(args, "rust", False)
+    if rust:
+        from esphome import rust_generator
+        CORE.add_job(rust_generator.generate, config)
     exit_code = write_cpp(config, native_idf=native_idf)
     if exit_code != 0:
         return exit_code
     if args.only_generate:
         _LOGGER.info("Successfully generated source code.")
         return 0
+    if rust:
+        from esphome import rust_generator
+        return rust_generator.compile(config)
     exit_code = compile_program(args, config)
     if exit_code != 0:
         return exit_code
@@ -885,6 +893,10 @@ def command_logs(args: ArgsProtocol, config: ConfigType) -> int | None:
 
 def command_run(args: ArgsProtocol, config: ConfigType) -> int | None:
     native_idf = getattr(args, "native_idf", False)
+    rust = getattr(args, "rust", False)
+    if rust:
+        from esphome import rust_generator
+        CORE.add_job(rust_generator.generate, config)
     exit_code = write_cpp(config, native_idf=native_idf)
     if exit_code != 0:
         return exit_code
@@ -1344,6 +1356,11 @@ def parse_args(argv):
         help="Build with native ESP-IDF instead of PlatformIO (ESP32 esp-idf framework only).",
         action="store_true",
     )
+    parser_compile.add_argument(
+        "--rust",
+        help="Enable Rust migration mode (hybrid C++/Rust build).",
+        action="store_true",
+    )
 
     parser_upload = subparsers.add_parser(
         "upload",
@@ -1428,6 +1445,11 @@ def parse_args(argv):
     parser_run.add_argument(
         "--native-idf",
         help="Build with native ESP-IDF instead of PlatformIO (ESP32 esp-idf framework only).",
+        action="store_true",
+    )
+    parser_run.add_argument(
+        "--rust",
+        help="Enable Rust migration mode (hybrid C++/Rust build).",
         action="store_true",
     )
 

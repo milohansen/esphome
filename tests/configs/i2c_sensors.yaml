@@ -1,0 +1,20 @@
+esphome:
+  name: i2c_sensors
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+
+sensor:
+  - platform: bmp280_i2c
+    id: pressure_sensor
+    address: 0x76
+    temperature:
+      name: "Temperature"
+    pressure:
+      name: "Pressure"

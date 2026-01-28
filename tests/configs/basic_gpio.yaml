@@ -1,0 +1,15 @@
+esphome:
+  name: basic_gpio
+
+esp32:
+  board: esp32dev
+
+switch:
+  - platform: gpio
+    id: test_switch
+    pin: GPIO5
+
+binary_sensor:
+  - platform: gpio
+    id: test_button
+    pin: GPIO12

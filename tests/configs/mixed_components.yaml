@@ -1,0 +1,16 @@
+esphome:
+  name: mixed_components
+
+esp32:
+  board: esp32dev
+
+switch:
+  - platform: gpio
+    id: test_switch
+    pin: GPIO5
+
+sensor:
+  - platform: dht
+    id: temp_sensor
+    pin: GPIO4
+    model: DHT22
