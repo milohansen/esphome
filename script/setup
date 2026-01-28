@@ -24,6 +24,19 @@ pre-commit install
 
 mkdir -p .temp
 
+# Rust setup for hybrid architecture
+if [ -x "$(command -v rustup)" ]; then
+  echo "Setting up Rust environment..."
+  rustup target add riscv32imc-unknown-none-elf
+  if ! [ -x "$(command -v espflash)" ]; then
+    echo "Installing espflash..."
+    cargo install espflash
+  fi
+else
+  echo "Warning: rustup not found. Rust components will not be buildable."
+  echo "Please install Rust from https://rustup.rs/"
+fi
+
 echo
 echo
 echo "Virtual environment created. Run 'source venv/bin/activate' to use it."
