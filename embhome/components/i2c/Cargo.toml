@@ -1,0 +1,29 @@
+[package]
+name = "esphome-i2c"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+esphome-core = { workspace = true }
+esphome-config = { workspace = true }
+esp-hal = { workspace = true }
+embassy-time = { workspace = true }
+embedded-hal = { workspace = true }
+embedded-hal-async = { workspace = true }
+log = { workspace = true }
+
+[features]
+# Forward chip features to esp-hal
+# I2C is available on all ESP32 variants
+esp32 = ["esphome-core/esp32", "esp-hal/esp32"]
+esp32c2 = ["esphome-core/esp32c2", "esp-hal/esp32c2"]
+esp32c3 = ["esphome-core/esp32c3", "esp-hal/esp32c3"]
+esp32c5 = ["esphome-core/esp32c5", "esp-hal/esp32c5"]
+esp32c6 = ["esphome-core/esp32c6", "esp-hal/esp32c6"]
+esp32c61 = ["esphome-core/esp32c61", "esp-hal/esp32c61"]
+esp32h2 = ["esphome-core/esp32h2", "esp-hal/esp32h2"]
+esp32p4 = ["esphome-core/esp32p4", "esp-hal/esp32p4"]
+esp32s2 = ["esphome-core/esp32s2", "esp-hal/esp32s2"]
+esp32s3 = ["esphome-core/esp32s3", "esp-hal/esp32s3"]
+
+default = []
