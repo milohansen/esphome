@@ -202,9 +202,9 @@ embassy-futures = "0.1.1"
 embedded-hal = "1.0"
 embedded-hal-async = "1.0"
 esp-hal = {{ version = "1.0.0", features = ["esp32"] }}
-esp-hal-embassy = {{ version = "0.9.1", features = ["esp32", "executors"] }}
-esp-backtrace = {{ version = "0.15.1", features = ["panic-handler", "exception-handler", "println"] }}
-esp-println = {{ version = "0.13.1", features = ["esp32", "log"] }}
+esp-hal-embassy = { version = "0.6.0", features = ["esp32"] }
+esp-backtrace = { version = "0.15.0", features = ["panic-handler", "exception-handler", "println"] }
+esp-println = { version = "0.13.0", features = ["esp32", "log"] }
 log = "0.4"
 static_cell = "2.0"
 critical-section = "1.1"
