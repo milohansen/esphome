@@ -1025,28 +1025,17 @@ def compile(config):
     ld_scripts = []
 
     # 1. Process build directory scripts (memory.ld, sections.ld)
-    # We prioritize finding memory.ld first because it defines regions used by others.
+    # CRITICAL CHANGE: We no longer patch memory.ld. We use it AS-IS.
+    # The flag --allow-multiple-definition (set in generate_cargo_config) will handle
+    # conflicts with Rust's linkall.x, while ensuring sections.ld finds the aliases it needs.
     memory_script = None
     other_scripts = []
 
     if env_dir:
         for file in env_dir.rglob("*.ld"):
             if file.name == "memory.ld":
-                # Create a filtered version of memory.ld to remove conflicts with Rust's linkall.x
-                fixed_memory_ld = build_dir / "memory_fixed.ld"
-                _LOGGER.info("Patching %s to remove conflicting aliases...", file.name)
-                try:
-                    with open(file) as f_in, open(fixed_memory_ld, "w") as f_out:
-                        for line in f_in:
-                            # Filter out REGION_ALIAS to prevent redefinition errors
-                            if "REGION_ALIAS" in line:
-                                f_out.write(f"/* REMOVED CONFLICT: {line.strip()} */\n")
-                            else:
-                                f_out.write(line)
-                    memory_script = fixed_memory_ld.absolute()
-                except Exception as e:
-                    _LOGGER.warning("Failed to patch memory.ld: %s. Using original.", e)
-                    memory_script = file.absolute()
+                _LOGGER.info("Found memory.ld: %s (Using as-is)", file.name)
+                memory_script = file.absolute()
             elif file.name != "project.checksum":
                 other_scripts.append(file.absolute())
 
@@ -1115,7 +1104,7 @@ def compile(config):
         ),
     )
 
-    # RE-GENERATE build.rs to include the new force-load flags
+    # Ensure build.rs includes the force-load flags for interrupts
     write_file_if_changed(build_dir / "build.rs", generate_build_rs())
 
     log_file = build_dir / "cargo_build.log"
