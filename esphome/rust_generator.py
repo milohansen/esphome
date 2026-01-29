@@ -386,6 +386,7 @@ def generate_build_rs():
     # LINKER FIXES:
     # 1. Use --start-group/--end-group with -l<name> args to resolve circular deps.
     # 2. Add -lnosys to fix undefined references to _write, _read, etc.
+    # 3. Force-load RISC-V interrupt symbols to fix "undefined reference to esprv_int_..."
     return """
 use std::env;
 use std::path::PathBuf;
@@ -434,6 +435,16 @@ fn main() {
 
     // END LINKER GROUP
     println!("cargo:rustc-link-arg=-Wl,--end-group");
+
+    // FORCE LOAD SYMBOLS (Fixes undefined references in ESP32-C3 builds)
+    println!("cargo:rustc-link-arg=-u");
+    println!("cargo:rustc-link-arg=esprv_int_set_priority");
+    println!("cargo:rustc-link-arg=-u");
+    println!("cargo:rustc-link-arg=esprv_int_set_type");
+    println!("cargo:rustc-link-arg=-u");
+    println!("cargo:rustc-link-arg=esprv_int_enable");
+    println!("cargo:rustc-link-arg=-u");
+    println!("cargo:rustc-link-arg=esprv_int_disable");
 }
 """
 
@@ -1000,11 +1011,8 @@ def compile(config):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
 
-    # RESTORED AND MODIFIED: Find PlatformIO linker scripts recursively
+    # RESTORED AND MODIFIED: Find PlatformIO Linker Scripts
     # We must include *.ld (especially peripherals.ld) AND memory.ld.
-    # While memory.ld conflicts with Rust's linkall.x, excluding it causes
-    # undefined memory regions which breaks relocation for binary blobs.
-    # The flag -Wl,--allow-multiple-definition handles the conflict.
     esphome_build_dir = build_dir.parent
     pio_build_dir = esphome_build_dir / ".pio" / "build"
     env_dir = None
@@ -1015,11 +1023,89 @@ def compile(config):
                 break
 
     ld_scripts = []
+
+    # 1. Process build directory scripts (memory.ld, sections.ld)
+    # We prioritize finding memory.ld first because it defines regions used by others.
+    memory_script = None
+    other_scripts = []
+
     if env_dir:
-        # Recursive search to find scripts like peripherals.ld that might be nested
         for file in env_dir.rglob("*.ld"):
-            _LOGGER.info("Adding PlatformIO linker script: %s", file.name)
-            ld_scripts.append(file.absolute())
+            if file.name == "memory.ld":
+                # Create a filtered version of memory.ld to remove conflicts with Rust's linkall.x
+                fixed_memory_ld = build_dir / "memory_fixed.ld"
+                _LOGGER.info("Patching %s to remove conflicting aliases...", file.name)
+                try:
+                    with open(file) as f_in, open(fixed_memory_ld, "w") as f_out:
+                        for line in f_in:
+                            # Filter out REGION_ALIAS to prevent redefinition errors
+                            if "REGION_ALIAS" in line:
+                                f_out.write(f"/* REMOVED CONFLICT: {line.strip()} */\n")
+                            else:
+                                f_out.write(line)
+                    memory_script = fixed_memory_ld.absolute()
+                except Exception as e:
+                    _LOGGER.warning("Failed to patch memory.ld: %s. Using original.", e)
+                    memory_script = file.absolute()
+            elif file.name != "project.checksum":
+                other_scripts.append(file.absolute())
+
+    # 2. Locate peripherals.ld (Critical for TIMERG0, RTCCNTL, etc.)
+    # This is usually in the framework packages, NOT the build dir.
+    home = Path.home()
+    framework_dir = home / ".platformio" / "packages" / "framework-espidf"
+    peripherals_ld = None
+
+    if framework_dir.exists():
+        # Search strategy:
+        # 1. Check standard path: components/soc/esp32xx/ld/peripherals.ld
+        # 2. Check prefixed path: components/soc/esp32xx/ld/esp32xx.peripherals.ld
+        # 3. Wildcard search: *peripherals.ld inside components/soc
+
+        paths_to_check = [
+            framework_dir
+            / "components"
+            / "soc"
+            / blob_folder
+            / "ld"
+            / "peripherals.ld",
+            framework_dir
+            / "components"
+            / "soc"
+            / blob_folder
+            / "ld"
+            / f"{blob_folder}.peripherals.ld",
+        ]
+
+        for p in paths_to_check:
+            if p.exists():
+                peripherals_ld = p
+                break
+
+        if not peripherals_ld:
+            # Fallback: Recursive wildcard search
+            # We filter by blob_folder to avoid picking up other variants (e.g. esp32 vs esp32c3)
+            for f in framework_dir.rglob("*peripherals.ld"):
+                if blob_folder in str(f) and "soc" in str(f):
+                    peripherals_ld = f
+                    break
+
+    if peripherals_ld:
+        _LOGGER.info("Found peripherals.ld: %s", peripherals_ld)
+    else:
+        _LOGGER.warning(
+            "Could not find peripherals.ld in framework! Linker errors expected."
+        )
+
+    # 3. Apply Strict Order: Memory Defs -> Peripherals -> Section Usage
+    # The ORDER MATTERS SIGNIFICANTLY.
+    if memory_script:
+        ld_scripts.append(memory_script)
+
+    if peripherals_ld:
+        ld_scripts.append(peripherals_ld.absolute())
+
+    ld_scripts.extend(other_scripts)
 
     cargo_config_dir = build_dir / ".cargo"
     write_file_if_changed(
@@ -1028,6 +1114,9 @@ def compile(config):
             target_triple, toolchain_path, toolchain_prefix, ld_scripts
         ),
     )
+
+    # RE-GENERATE build.rs to include the new force-load flags
+    write_file_if_changed(build_dir / "build.rs", generate_build_rs())
 
     log_file = build_dir / "cargo_build.log"
     try:
