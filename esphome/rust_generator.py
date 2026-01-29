@@ -77,11 +77,9 @@ def find_toolchain_path(toolchain_prefix):
     """
     compiler_name = f"{toolchain_prefix}-g++"
 
-    # 1. Check if it's already in PATH
     if shutil.which(compiler_name):
         return None
 
-    # 2. Check PlatformIO packages
     pio_packages = Path(os.path.expanduser("~/.platformio/packages"))
 
     if "riscv32" in toolchain_prefix:
@@ -336,13 +334,35 @@ panic = "abort"
 """
 
 
-def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
+def generate_cargo_config(
+    target_triple, toolchain_path, toolchain_prefix, ld_scripts=None
+):
     linker_line = ""
     if toolchain_path:
         linker = toolchain_path / f"{toolchain_prefix}-g++"
         linker_line = f'linker = "{linker}"'
     else:
         linker_line = f'linker = "{toolchain_prefix}-g++"'
+
+    # Default flags
+    flags = [
+        "-C",
+        "link-arg=-Tlinkall.x",
+        "-C",
+        "link-arg=-nostartfiles",
+        # Fix for multiple definitions (e.g. rtc_clk, stack_chk) between Rust and IDF archives
+        "-C",
+        "link-arg=-Wl,-z,muldefs",
+    ]
+
+    # Append PIO discovered linker scripts
+    if ld_scripts:
+        for script in ld_scripts:
+            # We must use absolute paths to ensure cargo finds them from the crate root
+            flags.append("-C")
+            flags.append(f"link-arg=-T{script}")
+
+    rustflags_str = ", ".join([f'"{f}"' for f in flags])
 
     return f"""
 [build]
@@ -352,14 +372,13 @@ target = "{target_triple}"
 {linker_line}
 runner = "espflash flash --monitor"
 rustflags = [
-  "-C", "link-arg=-Tlinkall.x",
-  "-C", "link-arg=-nostartfiles",
+  {rustflags_str}
 ]
 """
 
 
 def generate_build_rs():
-    # Links everything in libs/ plus standard C/m libraries
+    # UPDATED: Using --start-group/--end-group to resolve circular dependencies in ESP-IDF
     return """
 use std::env;
 use std::path::PathBuf;
@@ -371,6 +390,17 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", libs_dir.display());
 
+    // 1. Start the linker group
+    // This is critical for ESP-IDF libraries which often have circular dependencies.
+    // (e.g. esp_wifi depends on coexist, which depends on esp_wifi)
+    println!("cargo:rustc-link-arg=-Wl,--start-group");
+
+    // 2. Link libesphome.a (Application code)
+    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
+    println!("cargo:rustc-link-arg=-lesphome");
+    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+
+    // 3. Link all framework libraries found in libs/
     if let Ok(entries) = fs::read_dir(&libs_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -378,11 +408,9 @@ fn main() {
                 if ext == "a" {
                     if let Some(stem) = path.file_stem() {
                         let name = stem.to_string_lossy();
-                        if name.starts_with("lib") {
-                            // Avoid linking libmain.a or libesphome.a twice if filtered incorrectly
-                            if name != "libmain" {
-                                println!("cargo:rustc-link-lib=static={}", &name[3..]);
-                            }
+                        // Skip libesphome (already linked) and libmain (often conflicts)
+                        if name.starts_with("lib") && name != "libesphome" && name != "libmain" {
+                            println!("cargo:rustc-link-lib=static={}", &name[3..]);
                         }
                     }
                 }
@@ -390,14 +418,15 @@ fn main() {
         }
     }
 
-    // Link Standard C/Math libraries to resolve sprintf/vsnprintf
-    println!("cargo:rustc-link-lib=c");
-    println!("cargo:rustc-link-lib=m");
-    println!("cargo:rustc-link-lib=gcc");
+    // 4. Link Standard C/C++ Libraries (System)
+    // Included in the group to resolve any system symbols needed by framework libs
+    println!("cargo:rustc-link-lib=static=stdc++");
+    println!("cargo:rustc-link-lib=static=c");
+    println!("cargo:rustc-link-lib=static=m");
+    println!("cargo:rustc-link-lib=static=gcc");
 
-    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
-    println!("cargo:rustc-link-arg=-lesphome");
-    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+    // 5. End the linker group
+    println!("cargo:rustc-link-arg=-Wl,--end-group");
 }
 """
 
@@ -605,6 +634,8 @@ pub extern "C" fn rust_i2c_write(
     let bytes = unsafe { slice::from_raw_parts(data, len) };
 
     embassy_futures::block_on(async {
+        // Suppress Rust 2024 static_mut_refs warning (single-core safe in this context)
+        #[allow(static_mut_refs)]
         let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
         match bus.write(addr, bytes).await {
             Ok(()) => 0,
@@ -623,6 +654,7 @@ pub extern "C" fn rust_i2c_read(
     let buffer_slice = unsafe { slice::from_raw_parts_mut(buffer, len) };
 
     embassy_futures::block_on(async {
+        #[allow(static_mut_refs)]
         let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
         match bus.read(addr, buffer_slice).await {
             Ok(()) => 0,
@@ -646,6 +678,7 @@ pub extern "C" fn rust_i2c_write_read(
     let read_slice = unsafe { slice::from_raw_parts_mut(read_buffer, read_len) };
 
     embassy_futures::block_on(async {
+        #[allow(static_mut_refs)]
         let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
         match bus.write_read(addr, write_bytes, read_slice).await {
             Ok(()) => 0,
@@ -787,7 +820,6 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         return False
 
     # 3. Create libesphome.a from .o files (Application Code)
-    # CRITICAL FIX: Only archive object files from 'src/' to avoid duplicate definitions of framework symbols
     obj_files = []
 
     # Walk only the 'src' subdirectory of the build environment
@@ -800,8 +832,6 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
 
     if not obj_files:
         _LOGGER.error("No object files found in %s", src_build_dir)
-        # Fallback: check root env dir in case of flat build structure, but filter aggressively
-        # (This is risky but handles edge cases)
         for root, dirs, files in os.walk(env_dir):
             obj_files.extend(
                 [
@@ -841,8 +871,6 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
     framework_dir = home / ".platformio" / "packages" / "framework-espidf"
 
     if framework_dir.exists():
-        # Find all .a files in framework-espidf that reside in a directory named 'blob_folder'
-        # e.g. components/esp_wifi/lib/esp32c3/libnet80211.a
         _LOGGER.info(
             "Searching framework-espidf for precompiled blobs (folder: %s)...",
             blob_folder,
@@ -850,22 +878,15 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
 
         found_blobs = 0
         for root, dirs, files in os.walk(framework_dir):
-            # Check if current directory matches blob folder OR is a generic lib folder
             if Path(root).name == blob_folder or Path(root).name == "lib":
                 for file in files:
                     if file.endswith(".a"):
                         src = Path(root) / file
                         dst = libs_dir / file
-                        # Only copy if not already present (PIO built libs take precedence)
                         if not dst.exists():
                             shutil.copy(src, dst)
                             found_blobs += 1
         _LOGGER.info("Found and copied %d binary blobs.", found_blobs)
-
-        if found_blobs == 0:
-            _LOGGER.warning(
-                "No binary blobs found! Check 'blob_folder' name in VARIANT_MAP."
-            )
     else:
         _LOGGER.warning(
             "ESP-IDF framework not found at %s. Linker errors likely.", framework_dir
@@ -881,7 +902,6 @@ async def generate(config):
     target_triple = variant_info["target"]
     rust_feature = variant_info["feature"]
     toolchain_prefix = variant_info["toolchain"]
-    # blob_folder = variant_info["blob_folder"]
 
     _LOGGER.info(
         "Detected variant: %s, feature: %s, target: %s",
@@ -941,6 +961,7 @@ async def generate(config):
 
     cargo_config_dir = build_dir / ".cargo"
     cargo_config_dir.mkdir(exist_ok=True)
+    # Note: Linker scripts are not known yet (until after PIO build), so we write a base config
     write_file_if_changed(
         cargo_config_dir / "config.toml",
         generate_cargo_config(target_triple, toolchain_path, toolchain_prefix),
@@ -978,6 +999,7 @@ def compile(config):
     _LOGGER.info("Compiling Rust migration project in %s...", build_dir)
 
     variant_info = get_variant_info(config)
+    target_triple = variant_info["target"]
     toolchain_prefix = variant_info["toolchain"]
     blob_folder = variant_info["blob_folder"]
     toolchain_path = find_toolchain_path(toolchain_prefix)
@@ -985,6 +1007,33 @@ def compile(config):
     if not build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
+
+    # POST-PROCESSING: Find linker scripts generated by PlatformIO
+    # PlatformIO puts them in .pio/build/<env>/
+    esphome_build_dir = build_dir.parent
+    pio_build_dir = esphome_build_dir / ".pio" / "build"
+    env_dir = None
+    if pio_build_dir.exists():
+        for d in pio_build_dir.iterdir():
+            if d.is_dir() and d.name != "project.checksum":
+                env_dir = d
+                break
+
+    ld_scripts = []
+    if env_dir:
+        for file in env_dir.iterdir():
+            if file.suffix == ".ld":
+                _LOGGER.info("Found PlatformIO linker script: %s", file.name)
+                ld_scripts.append(file.absolute())
+
+    # Update Cargo config with the found linker scripts
+    cargo_config_dir = build_dir / ".cargo"
+    write_file_if_changed(
+        cargo_config_dir / "config.toml",
+        generate_cargo_config(
+            target_triple, toolchain_path, toolchain_prefix, ld_scripts
+        ),
+    )
 
     log_file = build_dir / "cargo_build.log"
     try:
