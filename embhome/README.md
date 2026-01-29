@@ -186,7 +186,7 @@ esp32c3 = [
 
 ## Code Generation for Projects
 
-The Python code generator uses `codegen_helpers.py` with **esp-generate integration**:
+The Python code generator uses `codegen_helpers.py` with **esp-generate integration** and **automated validation**:
 
 ```python
 from codegen_helpers import DependencyManager, ProjectConfig
@@ -206,6 +206,9 @@ config = ProjectConfig(
     components=["esphome-wifi", "esphome-api", "esphome-gpio"]
 )
 
+# Generate dependency report (shows what will be included)
+print(dep_manager.generate_dependency_report(config))
+
 # Generate using esp-generate (recommended)
 if dep_manager.generate_project_with_esp_generate(config, output_path):
     print("✓ Generated with esp-generate")
@@ -213,9 +216,22 @@ else:
     # Fallback if cargo-generate not installed
     dep_manager.generate_project_cargo_toml(config, output_path)
     dep_manager.generate_cargo_config(config.chip, output_path)
+
+# Validate generated project (checks for duplicates, feature propagation)
+validation_results = dep_manager.validate_generated_project(project_dir)
+dep_manager.report_validation_results(validation_results)
 ```
 
-See [ESP_GENERATE_INTEGRATION.md](ESP_GENERATE_INTEGRATION.md) for details.
+### New Validation Features
+
+The system now includes automated validation:
+
+- **Workspace Version Reading**: Versions read from workspace `Cargo.toml` (no hardcoding)
+- **Duplicate Detection**: Runs `cargo tree --duplicates` after generation
+- **Feature Validation**: Verifies chip features propagate correctly
+- **Dependency Report**: Shows which components add which dependencies
+
+See [ESP_GENERATE_INTEGRATION.md](ESP_GENERATE_INTEGRATION.md) and [IMPROVEMENTS.md](IMPROVEMENTS.md) for details.
 
 ## Supported Chips
 

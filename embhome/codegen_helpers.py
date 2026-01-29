@@ -322,17 +322,70 @@ class DependencyManager:
         }
 
     def _get_platform_dependencies(self, chip: str) -> dict:
-        """Get required platform dependencies for the chip"""
-        return {
-            "esp-hal": {"version": "1.0.0", "features": ["unstable", chip]},
-            "esp-backtrace": {
-                "version": "0.11",
+        """Get required platform dependencies for the chip from workspace"""
+        deps = {}
+
+        # Read versions from workspace
+        if "esp-hal" in self.workspace_deps:
+            esp_hal_dep = self.workspace_deps["esp-hal"]
+            if isinstance(esp_hal_dep, dict):
+                deps["esp-hal"] = {
+                    "version": esp_hal_dep.get("version", "1.0.0"),
+                    "features": ["unstable", chip],
+                }
+            else:
+                deps["esp-hal"] = {
+                    "version": esp_hal_dep,
+                    "features": ["unstable", chip],
+                }
+
+        if "esp-backtrace" in self.workspace_deps:
+            esp_backtrace_dep = self.workspace_deps["esp-backtrace"]
+            version = (
+                esp_backtrace_dep.get("version")
+                if isinstance(esp_backtrace_dep, dict)
+                else esp_backtrace_dep
+            )
+            deps["esp-backtrace"] = {
+                "version": version,
                 "features": ["panic-handler", "exception-handler"],
-            },
-            "esp-println": "0.9",
-            "embassy-executor": {"version": "0.9.1", "features": ["executor-thread"]},
-            "embassy-time": {"version": "0.5.0", "features": ["generic-queue-8"]},
-        }
+            }
+
+        if "esp-println" in self.workspace_deps:
+            esp_println_dep = self.workspace_deps["esp-println"]
+            deps["esp-println"] = (
+                esp_println_dep.get("version")
+                if isinstance(esp_println_dep, dict)
+                else esp_println_dep
+            )
+
+        if "embassy-executor" in self.workspace_deps:
+            executor_dep = self.workspace_deps["embassy-executor"]
+            if isinstance(executor_dep, dict):
+                deps["embassy-executor"] = {
+                    "version": executor_dep.get("version", "0.9.1"),
+                    "features": executor_dep.get("features", ["executor-thread"]),
+                }
+            else:
+                deps["embassy-executor"] = {
+                    "version": executor_dep,
+                    "features": ["executor-thread"],
+                }
+
+        if "embassy-time" in self.workspace_deps:
+            time_dep = self.workspace_deps["embassy-time"]
+            if isinstance(time_dep, dict):
+                deps["embassy-time"] = {
+                    "version": time_dep.get("version", "0.5.0"),
+                    "features": time_dep.get("features", ["generic-queue-8"]),
+                }
+            else:
+                deps["embassy-time"] = {
+                    "version": time_dep,
+                    "features": ["generic-queue-8"],
+                }
+
+        return deps
 
     def generate_cargo_config(self, chip: str, output_path: Path) -> None:
         """Generate .cargo/config.toml with correct target and runner"""
@@ -418,6 +471,176 @@ class DependencyManager:
 
         return issues
 
+    def validate_generated_project(self, project_dir: Path) -> dict[str, Any]:
+        """
+        Validate a generated project for dependency issues.
+        Returns a dictionary with validation results.
+        """
+        results = {
+            "duplicates": [],
+            "feature_validation": [],
+            "dependency_graph": "",
+            "success": True,
+        }
+
+        # Check for duplicate dependencies
+        try:
+            result = subprocess.run(
+                ["cargo", "tree", "--duplicates"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.stdout.strip():
+                results["duplicates"] = result.stdout.strip().split("\n")
+                results["success"] = False
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            results["duplicates"] = [f"Error running cargo tree: {e}"]
+            results["success"] = False
+
+        # Validate feature propagation
+        cargo_toml_path = project_dir / "Cargo.toml"
+        if cargo_toml_path.exists():
+            try:
+                with open(cargo_toml_path, "rb") as f:
+                    cargo_data = tomli.load(f)
+
+                features = cargo_data.get("features", {})
+                dependencies = cargo_data.get("dependencies", {})
+
+                # Check that chip features are properly forwarded
+                for feature_name, feature_list in features.items():
+                    if feature_name in SUPPORTED_CHIPS:
+                        # Verify esphome-core gets the chip feature
+                        if "esphome-core" in dependencies:
+                            expected = f"esphome-core/{feature_name}"
+                            if expected not in feature_list:
+                                results["feature_validation"].append(
+                                    f"Missing feature forward: {expected}"
+                                )
+                                results["success"] = False
+
+                        # Verify esp-hal gets the chip feature
+                        if "esp-hal" in dependencies:
+                            expected = f"esp-hal/{feature_name}"
+                            if expected not in feature_list:
+                                results["feature_validation"].append(
+                                    f"Missing feature forward: {expected}"
+                                )
+                                results["success"] = False
+
+            except Exception as e:
+                results["feature_validation"].append(f"Error validating features: {e}")
+                results["success"] = False
+
+        # Generate dependency graph report
+        try:
+            result = subprocess.run(
+                ["cargo", "tree", "--edges", "normal", "--depth", "2"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                results["dependency_graph"] = result.stdout
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            results["dependency_graph"] = "Unable to generate dependency graph"
+
+        return results
+
+    def report_validation_results(self, results: dict[str, Any]) -> None:
+        """Print validation results in a user-friendly format"""
+        print("\n=== Project Validation Results ===\n")
+
+        # Duplicate dependencies
+        if results["duplicates"]:
+            print("❌ Duplicate Dependencies Found:")
+            for dup in results["duplicates"]:
+                print(f"  {dup}")
+        else:
+            print("✅ No duplicate dependencies")
+
+        # Feature validation
+        if results["feature_validation"]:
+            print("\n❌ Feature Validation Issues:")
+            for issue in results["feature_validation"]:
+                print(f"  {issue}")
+        else:
+            print("✅ Feature propagation correct")
+
+        # Dependency graph
+        if results["dependency_graph"]:
+            print("\n📊 Dependency Graph (depth 2):")
+            print(results["dependency_graph"])
+
+        # Overall status
+        print("\n" + "=" * 40)
+        if results["success"]:
+            print("✅ All validation checks passed!")
+        else:
+            print("❌ Validation found issues - please review above")
+        print("=" * 40 + "\n")
+
+    def generate_dependency_report(self, config: ProjectConfig) -> str:
+        """
+        Generate a human-readable report showing which components
+        add which dependencies based on the configuration.
+        """
+        report_lines = []
+        report_lines.append("=" * 60)
+        report_lines.append("DEPENDENCY CONFIGURATION REPORT")
+        report_lines.append("=" * 60)
+        report_lines.append("")
+        report_lines.append(f"Project: {config.name}")
+        report_lines.append(f"Target Chip: {config.chip}")
+        report_lines.append("")
+
+        # Core dependencies (always present)
+        report_lines.append("CORE DEPENDENCIES (always included):")
+        report_lines.append("  • esphome-core (workspace component)")
+        report_lines.append("  • esp-hal (from workspace)")
+        report_lines.append("  • esp-backtrace (from workspace)")
+        report_lines.append("  • esp-println (from workspace)")
+        report_lines.append("  • embassy-executor (from workspace)")
+        report_lines.append("  • embassy-time (from workspace)")
+        report_lines.append("")
+
+        # Component-specific dependencies
+        if config.components:
+            report_lines.append("COMPONENT DEPENDENCIES:")
+            for component in config.components:
+                report_lines.append(f"  • {component}")
+                # Get transitive dependencies
+                deps = self.get_component_dependencies(component)
+                if deps:
+                    report_lines.extend(
+                        [
+                            f"    └─ {dep}"
+                            for dep in sorted(deps)
+                            if not dep.startswith("esphome-")
+                        ]
+                    )
+            report_lines.append("")
+
+        # Feature configuration
+        report_lines.append("FEATURE CONFIGURATION:")
+        report_lines.append(f"  Chip feature '{config.chip}' propagates to:")
+        report_lines.append("  • esphome-core")
+        report_lines.append("  • esp-hal")
+
+        report_lines.extend([f"  • {component}" for component in config.components])
+
+        # WiFi detection
+        if any("wifi" in comp for comp in config.components):
+            report_lines.append("  • esp-wifi (WiFi detected)")
+
+        report_lines.append("")
+        report_lines.append("=" * 60)
+
+        return "\n".join(report_lines)
+
 
 def example_usage():
     """Example of how to use this module in the code generator"""
@@ -426,11 +649,14 @@ def example_usage():
     dep_manager = DependencyManager(workspace_path=Path("./embhome"))
 
     # Validate workspace before generating
+    print("Validating workspace...")
     issues = dep_manager.validate_workspace_consistency()
     if issues:
-        print("Workspace validation issues:")
+        print("❌ Workspace validation issues:")
         for issue in issues:
             print(f"  - {issue}")
+        return None
+    print("✅ Workspace validation passed")
 
     # Create project configuration
     config = ProjectConfig(
@@ -444,16 +670,31 @@ def example_usage():
         ],
     )
 
+    # Generate dependency report
+    print("\n" + dep_manager.generate_dependency_report(config))
+
     # Try to use esp-generate first (recommended)
     output_path = Path("./generated-project")
+    project_dir = output_path.parent / config.name
+
+    print(f"\nGenerating project '{config.name}'...")
     if dep_manager.generate_project_with_esp_generate(config, output_path):
-        print(f"Generated project using esp-generate at {output_path}")
+        print(f"✅ Generated project using esp-generate at {project_dir}")
     else:
         # Fallback to manual generation
-        print("cargo-generate not found, using fallback generation")
+        print("⚠ cargo-generate not found, using fallback generation")
         dep_manager.generate_project_cargo_toml(config, output_path)
         dep_manager.generate_cargo_config(config.chip, output_path)
-        print(f"Generated project at {output_path}")
+        print(f"✅ Generated project at {output_path}")
+        project_dir = output_path
+
+    # Validate the generated project
+    print(f"\nValidating generated project at {project_dir}...")
+    validation_results = dep_manager.validate_generated_project(project_dir)
+    dep_manager.report_validation_results(validation_results)
+
+    # Return validation status
+    return validation_results["success"]
 
 
 if __name__ == "__main__":

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added - Validation and Quality Improvements
+
+#### Automated Validation System
+- **Post-generation validation**: Automatically checks generated projects for issues
+- **Duplicate dependency detection**: Runs `cargo tree --duplicates` after generation
+- **Feature propagation validation**: Verifies chip features are correctly forwarded
+- **Dependency graph visualization**: Generates dependency tree (depth 2) for inspection
+
+#### Dependency Configuration Reporting
+- **Configuration report generator**: Shows which components add which dependencies
+- **Transitive dependency tracking**: Reports indirect dependencies from each component
+- **Feature propagation visualization**: Displays how chip features cascade through dependencies
+
+#### Workspace Version Integration
+- **Dynamic version reading**: Reads dependency versions from workspace `Cargo.toml`
+- **No hardcoded versions**: All versions now sourced from workspace definitions
+- **Automatic synchronization**: Generated projects always use current workspace versions
+
 ### Added - esp-generate Integration
 
 #### Code Generation
@@ -64,18 +82,24 @@ All 9 workspace crates updated:
 - ✅ No type incompatibility issues
 - ✅ Builds work first time
 - ✅ Official esp-rs ecosystem compatibility
+- ✅ Automatic validation catches errors before build
+- ✅ Clear reports show what dependencies are included
 
 #### For Developers
 - ✅ Add `{ workspace = true }`, never worry about versions
 - ✅ Automatic feature propagation
 - ✅ Clear validation before commit
 - ✅ Official template as foundation
+- ✅ Dependency reports for debugging
+- ✅ Post-generation validation prevents mistakes
 
 #### For Maintainers
 - ✅ Update version once, all components get it
 - ✅ Validation catches issues early
 - ✅ Less code to maintain (use esp-rs templates)
 - ✅ Automatic updates from upstream
+- ✅ No hardcoded versions to keep in sync
+- ✅ Comprehensive error detection
 
 ## Integration Guide
 
