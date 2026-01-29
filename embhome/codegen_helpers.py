@@ -5,10 +5,13 @@ This module provides utilities for the Python code generator to:
 1. Ensure correct chip feature propagation
 2. Generate Cargo.toml files with proper dependencies
 3. Validate workspace dependency consistency
+4. Integrate with esp-generate for project scaffolding
 """
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import tomli
@@ -35,6 +38,19 @@ CHIP_DEPENDENT_COMPONENTS = [
     "esphome-ota",
     "esphome-gpio",
 ]
+
+# Map ESPHome chip names to esp-generate template names
+CHIP_TO_TEMPLATE_MCU = {
+    "esp32": "esp32",
+    "esp32c3": "esp32c3",
+    "esp32s2": "esp32s2",
+    "esp32s3": "esp32s3",
+    "esp32c2": "esp32c2",
+    "esp32c5": "esp32c5",
+    "esp32c6": "esp32c6",
+    "esp32h2": "esp32h2",
+    "esp32p4": "esp32p4",
+}
 
 
 @dataclass
@@ -110,13 +126,123 @@ class DependencyManager:
 
         return deps
 
+    def generate_project_with_esp_generate(
+        self, config: ProjectConfig, output_path: Path
+    ) -> bool:
+        """
+        Generate project using esp-generate (cargo-generate) as base.
+
+        Returns True if successful, False if cargo-generate not available.
+        """
+        # Check if cargo-generate is installed
+        try:
+            subprocess.run(
+                ["cargo-generate", "--version"],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+        # Generate project from esp-rs template
+        mcu = CHIP_TO_TEMPLATE_MCU.get(config.chip, "esp32c3")
+
+        # cargo-generate arguments
+        args = [
+            "cargo-generate",
+            "esp-rs/esp-template",
+            "--name",
+            config.name,
+            "-d",
+            f"mcu={mcu}",
+            "-d",
+            "advanced=true",
+            "-d",
+            "devcontainer=false",
+            "-d",
+            "wokwi=false",
+            "-d",
+            "ci=false",
+            "-d",
+            "std=false",  # Use no_std for embedded
+        ]
+
+        try:
+            subprocess.run(
+                args,
+                cwd=output_path.parent,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to generate project: {e}", file=sys.stderr)
+            print(f"stdout: {e.stdout.decode()}", file=sys.stderr)
+            print(f"stderr: {e.stderr.decode()}", file=sys.stderr)
+            return False
+
+        # Now modify the generated Cargo.toml to add ESPHome components
+        project_dir = output_path.parent / config.name
+        self._inject_esphome_dependencies(config, project_dir)
+
+        return True
+
+    def _inject_esphome_dependencies(
+        self, config: ProjectConfig, project_dir: Path
+    ) -> None:
+        """Inject ESPHome component dependencies into generated Cargo.toml"""
+        cargo_toml_path = project_dir / "Cargo.toml"
+
+        with open(cargo_toml_path, "rb") as f:
+            cargo_data = tomli.load(f)
+
+        # Add ESPHome component dependencies
+        if "dependencies" not in cargo_data:
+            cargo_data["dependencies"] = {}
+
+        # Collect all components
+        component_deps = {}
+        for component in config.components:
+            component_deps[component] = ComponentDependency(
+                name=component,
+                path=str(self.workspace_path / "components" / component),
+                needs_chip_feature=component in CHIP_DEPENDENT_COMPONENTS,
+            )
+
+        # Always include core
+        if "esphome-core" not in component_deps:
+            component_deps["esphome-core"] = ComponentDependency(
+                name="esphome-core",
+                path=str(self.workspace_path / "core"),
+                needs_chip_feature=True,
+            )
+
+        # Add component dependencies
+        for comp_name, comp_dep in component_deps.items():
+            cargo_data["dependencies"][comp_name] = comp_dep.to_toml(config.chip)
+
+        # Ensure features section exists
+        if "features" not in cargo_data:
+            cargo_data["features"] = {}
+
+        # Add chip feature
+        features = []
+        for comp_name, comp_dep in component_deps.items():
+            if comp_dep.needs_chip_feature:
+                features.append(f"{comp_name}/{config.chip}")
+
+        cargo_data["features"][config.chip] = features
+        cargo_data["features"]["default"] = [config.chip]
+
+        # Write back
+        with open(cargo_toml_path, "wb") as f:
+            tomli_w.dump(cargo_data, f)
+
     def generate_project_cargo_toml(
         self, config: ProjectConfig, output_path: Path
     ) -> None:
-        """Generate Cargo.toml for a project with correct dependencies"""
+        """Generate Cargo.toml for a project with correct dependencies (fallback)"""
 
         # Collect all components and their dependencies
-        # all_components = set(config.components)
         component_deps = {}
 
         for component in config.components:
@@ -274,7 +400,7 @@ class DependencyManager:
                 ):
                     issues.append(
                         f"{component_name}: Dependency '{dep_name}' should use "
-                        "'{{ workspace = true }}' instead of version"
+                        "'{ workspace = true }' instead of version"
                     )
 
             # Check features forward to dependencies correctly
@@ -318,12 +444,16 @@ def example_usage():
         ],
     )
 
-    # Generate project files
+    # Try to use esp-generate first (recommended)
     output_path = Path("./generated-project")
-    dep_manager.generate_project_cargo_toml(config, output_path)
-    dep_manager.generate_cargo_config(config.chip, output_path)
-
-    print(f"Generated project at {output_path}")
+    if dep_manager.generate_project_with_esp_generate(config, output_path):
+        print(f"Generated project using esp-generate at {output_path}")
+    else:
+        # Fallback to manual generation
+        print("cargo-generate not found, using fallback generation")
+        dep_manager.generate_project_cargo_toml(config, output_path)
+        dep_manager.generate_cargo_config(config.chip, output_path)
+        print(f"Generated project at {output_path}")
 
 
 if __name__ == "__main__":

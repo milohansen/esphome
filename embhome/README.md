@@ -11,12 +11,14 @@ Modern async Rust implementation of ESPHome using Embassy and esp-hal.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Install ESP toolchain
-cargo install espup espflash
+cargo install espup espflash cargo-generate
 espup install
 
 # Install dependencies for code generator
 pip install tomli tomli-w
 ```
+
+**Note**: `cargo-generate` is recommended for project generation. It enables using the official esp-rs templates for better compatibility.
 
 ### Validate Workspace
 
@@ -184,7 +186,7 @@ esp32c3 = [
 
 ## Code Generation for Projects
 
-The Python code generator uses `codegen_helpers.py` to create projects:
+The Python code generator uses `codegen_helpers.py` with **esp-generate integration**:
 
 ```python
 from codegen_helpers import DependencyManager, ProjectConfig
@@ -204,10 +206,16 @@ config = ProjectConfig(
     components=["esphome-wifi", "esphome-api", "esphome-gpio"]
 )
 
-# Generate Cargo.toml with correct dependencies and features
-dep_manager.generate_project_cargo_toml(config, output_path)
-dep_manager.generate_cargo_config(config.chip, output_path)
+# Generate using esp-generate (recommended)
+if dep_manager.generate_project_with_esp_generate(config, output_path):
+    print("✓ Generated with esp-generate")
+else:
+    # Fallback if cargo-generate not installed
+    dep_manager.generate_project_cargo_toml(config, output_path)
+    dep_manager.generate_cargo_config(config.chip, output_path)
 ```
+
+See [ESP_GENERATE_INTEGRATION.md](ESP_GENERATE_INTEGRATION.md) for details.
 
 ## Supported Chips
 
@@ -350,6 +358,8 @@ Update `DEPENDENCY_MANAGEMENT.md` if you change the dependency structure.
 ## Documentation
 
 - **[DEPENDENCY_MANAGEMENT.md](DEPENDENCY_MANAGEMENT.md)** - Complete dependency system documentation
+- **[ESP_GENERATE_INTEGRATION.md](ESP_GENERATE_INTEGRATION.md)** - esp-generate integration guide
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Developer cheat sheet
 - **[../..ai/esphome_rust_full_conversion_spec.md](../.ai/esphome_rust_full_conversion_spec.md)** - Full architecture specification
 - **[codegen_helpers.py](codegen_helpers.py)** - Python API for code generation
 

@@ -232,7 +232,6 @@ def generate_rust_project(config, output_dir: Path):
             )
         )
         radio_features = ["wifi"]
-        gen.add_dependency(RustDependency("esp-alloc", "0.5.0"))
         gen.add_dependency(
             RustDependency(
                 "embassy-net",
