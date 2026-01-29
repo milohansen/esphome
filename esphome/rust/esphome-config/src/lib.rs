@@ -1,3 +1,7 @@
+#![no_std]
+extern crate alloc;
+use alloc::string::String;
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 /// Root configuration
@@ -117,7 +121,7 @@ pub enum PlatformConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GpioConfig {
-    pub pin: u8, // Simplified for now, often needs string parsing "GPIO5"
+    pub pin: u8,
 
     #[serde(default)]
     pub inverted: bool,

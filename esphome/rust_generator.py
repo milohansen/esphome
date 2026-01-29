@@ -27,12 +27,16 @@ class RustGenerator:
         self.functions: list[RustFunction] = []
         self.main_body: list[str] = []
         self.component_spawns: list[str] = []
+        self.global_macros: list[str] = []
 
     def add_dependency(self, dep: RustDependency):
         self.dependencies.append(dep)
 
     def add_module(self, name: str):
         self.modules.append(name)
+
+    def add_global_macro(self, macro_str: str):
+        self.global_macros.append(macro_str)
 
     def add_function(self, func: RustFunction):
         self.functions.append(func)
@@ -61,7 +65,12 @@ class RustGenerator:
 
     def generate_main_rs(self) -> str:
         code = "#![no_std]\n#![no_main]\n\n"
-        code += "use embassy_executor::Spawner;\n"
+        code += "extern crate alloc;\n"
+
+        for macro_str in self.global_macros:
+            code += f"{macro_str}\n"
+
+        code += "\nuse embassy_executor::Spawner;\n"
         code += "use esp_backtrace as _;\n"
         code += "use esp_hal::{clock::ClockControl, peripherals::Peripherals, prelude::*, timer::TimerGroup};\n"
         code += "use esphome_core::{Application, Platform};\n\n"
@@ -76,9 +85,7 @@ class RustGenerator:
             async_kw = "async " if func.is_async else ""
             args_str = ", ".join(func.args)
             ret_str = f" -> {func.return_type}" if func.return_type else ""
-            code += (
-                f"{async_kw}fn {func.name}({args_str}){ret_str} {{\n{func.body}\n}}\n\n"
-            )
+            code += f"{async_kw}fn {func.name}({args_str}){ret_str} {{ \n{func.body}\n}}\n\n"
 
         code += "#[esp_hal_embassy::main]\n"
         code += "async fn main(spawner: Spawner) {\n"

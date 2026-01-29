@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from esphome.const import CONF_NAME, CONF_PLATFORM
+from esphome.const import CONF_NAME, CONF_PASSWORD, CONF_SSID
 from esphome.rust_generator import RustDependency, RustFunction, RustGenerator
 
 
@@ -60,20 +60,13 @@ def generate_rust_project(config, output_dir: Path):
     gen = RustGenerator()
 
     # Determine chip/features
-    # Simple logic for now, defaulting to esp32
     chip = "esp32"
     if config["esphome"].get("board") in ["esp32-c3-devkitm-1"]:
         chip = "esp32c3"
 
-    # Core Dependencies
-    # Paths are relative to the build directory (usually .esphome/build/name)
-    # We assume the rust workspace is at repo root
-    # Adjust paths to point to the repo root from build dir
-    # repo_root = "../../../../esphome/rust"  # Adjust based on depth
-    # Actually, we should probably copy the crates or use absolute paths?
-    # For dev, absolute path to repo is best.
     rust_root = Path(os.getcwd()) / "esphome/rust"
 
+    # Core Dependencies
     gen.add_dependency(
         RustDependency("esphome-core", "0.1.0", path=str(rust_root / "esphome-core"))
     )
@@ -86,7 +79,7 @@ def generate_rust_project(config, output_dir: Path):
         )
     )
 
-    # HAL dependencies
+    # HAL Dependencies
     gen.add_dependency(RustDependency("esp-hal", "0.22.0", features=[chip]))
     gen.add_dependency(
         RustDependency("esp-hal-embassy", "0.5.0", features=[chip, "log"])
@@ -97,7 +90,6 @@ def generate_rust_project(config, output_dir: Path):
         executor_features.append("arch-riscv32")
         executor_features.append("executor-thread")
     else:
-        # Default to xtensa for esp32, esp32s2, esp32s3
         executor_features.append("arch-xtensa")
         executor_features.append("executor-thread")
 
@@ -112,10 +104,11 @@ def generate_rust_project(config, output_dir: Path):
             features=[chip, "exception-handler", "panic-handler", "println"],
         )
     )
+    gen.add_dependency(RustDependency("static_cell", "2.1.0"))
 
-    # Main setup
+    # App Setup
     app_name = config["esphome"][CONF_NAME]
-    platform_enum = "Esp32"  # Dynamic based on chip
+    platform_enum = "Esp32"
     if chip == "esp32c3":
         platform_enum = "Esp32c3"
 
@@ -127,6 +120,103 @@ def generate_rust_project(config, output_dir: Path):
         "let io = esp_hal::gpio::IO::new(peripherals.GPIO, peripherals.IO_MUX);"
     )
 
+    # WiFi Setup
+    if "wifi" in config:
+        wifi_conf = config["wifi"]
+        gen.add_dependency(
+            RustDependency(
+                "esphome-wifi",
+                "0.1.0",
+                path=str(rust_root / "esphome-wifi"),
+                features=[chip],
+            )
+        )
+        gen.add_dependency(
+            RustDependency("esp-wifi", "0.11.0", features=[chip, "embassy-net"])
+        )
+        gen.add_dependency(RustDependency("esp-alloc", "0.5.0"))
+        gen.add_dependency(
+            RustDependency(
+                "embassy-net",
+                "0.6.0",
+                features=["tcp", "udp", "dhcpv4", "medium-ethernet"],
+            )
+        )
+
+        gen.add_global_macro("use esp_alloc::heap_allocator;")
+        gen.add_global_macro("heap_allocator!(72 * 1024);")
+
+        gen.add_main_code(
+            "let timer_group1 = TimerGroup::new(peripherals.TIMG1, &clocks);"
+        )
+        gen.add_main_code("""
+    let init = esp_wifi::init(
+        timer_group1.timer0,
+        esp_hal::rng::Rng::new(peripherals.RNG),
+        peripherals.RADIO_CLK,
+        &clocks,
+    ).unwrap();
+        """)
+
+        gen.add_main_code("""
+    let (wifi_interface, controller) = esp_wifi::wifi::new_with_mode(
+        &init,
+        peripherals.WIFI,
+        esp_wifi::wifi::WifiStaDevice,
+    ).unwrap();
+        """)
+
+        # Static allocations
+        gen.add_main_code(
+            "static WIFI_RESOURCES: static_cell::StaticCell<esphome_wifi::WifiResources> = static_cell::StaticCell::new();"
+        )
+        gen.add_main_code(
+            "let wifi_resources = WIFI_RESOURCES.init(esphome_wifi::WifiResources::new());"
+        )
+
+        gen.add_main_code("""
+    let config = embassy_net::Config::dhcpv4(Default::default());
+    let seed = 1234;
+
+    let (stack, runner) = embassy_net::new(
+        wifi_interface,
+        config,
+        &mut wifi_resources.stack_resources,
+        seed
+    );
+        """)
+
+        gen.add_main_code(
+            "static STACK: static_cell::StaticCell<esphome_wifi::WifiStack> = static_cell::StaticCell::new();"
+        )
+        gen.add_main_code("let stack = STACK.init(stack);")
+
+        gen.add_component_spawn(
+            "spawner.spawn(esphome_wifi::net_task(stack)).unwrap();"
+        )
+
+        networks = wifi_conf.get("networks", [])
+        ssid = ""
+        password = ""
+        if networks:
+            first_net = networks[0]
+            ssid = first_net.get(CONF_SSID, "")
+            password = first_net.get(CONF_PASSWORD, "")
+        elif CONF_SSID in wifi_conf:
+            ssid = wifi_conf.get(CONF_SSID, "")
+            password = wifi_conf.get(CONF_PASSWORD, "")
+
+        gen.add_main_code(f"""
+    let wifi_config = esphome_config::WifiConfig {{
+        ssid: \"{ssid}\".to_string(),
+        password: \"{password}\".to_string(),
+        fast_connect: false,
+    }};
+        """)
+        gen.add_component_spawn(
+            "spawner.spawn(esphome_wifi::connection_task(controller, wifi_config)).unwrap();"
+        )
+
     # Components
     if "switch" in config:
         gen.add_dependency(
@@ -135,7 +225,7 @@ def generate_rust_project(config, output_dir: Path):
             )
         )
         for i, conf in enumerate(config["switch"]):
-            if conf[CONF_PLATFORM] == "gpio":
+            if conf.get("platform") == "gpio":
                 generate_gpio_switch(gen, conf, i)
 
     # Write Output
