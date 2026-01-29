@@ -72,16 +72,11 @@ def get_variant_info(config):
 
 
 def find_toolchain_path(toolchain_prefix):
-    """
-    Locate the bin directory for the given toolchain prefix (e.g., riscv32-esp-elf).
-    """
     compiler_name = f"{toolchain_prefix}-g++"
-
     if shutil.which(compiler_name):
         return None
 
     pio_packages = Path(os.path.expanduser("~/.platformio/packages"))
-
     if "riscv32" in toolchain_prefix:
         search_pattern = "toolchain-riscv32-esp*"
     elif "xtensa" in toolchain_prefix:
@@ -91,7 +86,6 @@ def find_toolchain_path(toolchain_prefix):
         search_pattern = "toolchain-*"
 
     potential_paths = list(pio_packages.glob(search_pattern))
-
     for p in potential_paths:
         bin_dir = p / "bin"
         if (bin_dir / compiler_name).exists() or (
@@ -172,7 +166,6 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("#include <cstdint>")
     code.append("#include <atomic>")
     code.append("")
-
     code.append("using namespace esphome;")
     code.append("")
 
@@ -246,6 +239,9 @@ def generate_bridge_cpp(legacy_info, native_info):
 
 def generate_bridge_rs(legacy_info, native_info):
     code = []
+    code.append("#![allow(dead_code)]")
+    code.append("#![allow(unused_imports)]")
+    code.append("")
     code.append("use core::ffi::c_void;")
     code.append("pub use crate::component_shims::i2c_bridge::{AsyncI2cBus, I2C_BUS};")
     code.append("")
@@ -257,7 +253,6 @@ def generate_bridge_rs(legacy_info, native_info):
     )
     code.append("}")
     code.append("")
-
     code.append("pub static mut LEGACY_COMPONENTS: &[(&str, *mut c_void)] = &[];")
     code.append("")
     code.append("pub fn get_legacy_component(id: &str) -> Option<*mut c_void> {")
@@ -334,9 +329,7 @@ panic = "abort"
 """
 
 
-def generate_cargo_config(
-    target_triple, toolchain_path, toolchain_prefix, ld_scripts=None
-):
+def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
     linker_line = ""
     if toolchain_path:
         linker = toolchain_path / f"{toolchain_prefix}-g++"
@@ -344,23 +337,15 @@ def generate_cargo_config(
     else:
         linker_line = f'linker = "{toolchain_prefix}-g++"'
 
-    # Default flags
+    # Fix for multiple definitions (e.g. rtc_clk, stack_chk) between Rust and IDF archives
     flags = [
         "-C",
         "link-arg=-Tlinkall.x",
         "-C",
         "link-arg=-nostartfiles",
-        # Fix for multiple definitions (e.g. rtc_clk, stack_chk) between Rust and IDF archives
         "-C",
         "link-arg=-Wl,-z,muldefs",
     ]
-
-    # Append PIO discovered linker scripts
-    if ld_scripts:
-        for script in ld_scripts:
-            # We must use absolute paths to ensure cargo finds them from the crate root
-            flags.append("-C")
-            flags.append(f"link-arg=-T{script}")
 
     rustflags_str = ", ".join([f'"{f}"' for f in flags])
 
@@ -378,7 +363,7 @@ rustflags = [
 
 
 def generate_build_rs():
-    # UPDATED: Using --start-group/--end-group to resolve circular dependencies in ESP-IDF
+    # Keep the --start-group fix for circular dependencies
     return """
 use std::env;
 use std::path::PathBuf;
@@ -391,8 +376,6 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", libs_dir.display());
 
     // 1. Start the linker group
-    // This is critical for ESP-IDF libraries which often have circular dependencies.
-    // (e.g. esp_wifi depends on coexist, which depends on esp_wifi)
     println!("cargo:rustc-link-arg=-Wl,--start-group");
 
     // 2. Link libesphome.a (Application code)
@@ -408,7 +391,7 @@ fn main() {
                 if ext == "a" {
                     if let Some(stem) = path.file_stem() {
                         let name = stem.to_string_lossy();
-                        // Skip libesphome (already linked) and libmain (often conflicts)
+                        // Skip libesphome (already linked) and libmain (conflicts)
                         if name.starts_with("lib") && name != "libesphome" && name != "libmain" {
                             println!("cargo:rustc-link-lib=static={}", &name[3..]);
                         }
@@ -419,7 +402,6 @@ fn main() {
     }
 
     // 4. Link Standard C/C++ Libraries (System)
-    // Included in the group to resolve any system symbols needed by framework libs
     println!("cargo:rustc-link-lib=static=stdc++");
     println!("cargo:rustc-link-lib=static=c");
     println!("cargo:rustc-link-lib=static=m");
@@ -439,6 +421,8 @@ def generate_main_rs(config, legacy_info, native_info):
     code = []
     code.append("#![no_std]")
     code.append("#![no_main]")
+    code.append("#![allow(unused_imports)]")
+    code.append("#![allow(unused_variables)]")
     code.append("")
     code.append("use core::ffi::c_void;")
     code.append("use static_cell::StaticCell;")
@@ -529,7 +513,6 @@ def generate_main_rs(config, legacy_info, native_info):
             code.append(
                 f"    let pin = Output::new(peripherals.GPIO{pin}, Level::Low, config);"
             )
-
             code.append(
                 f"    let mut {comp_id} = crate::components::gpio_switch::GpioSwitch::new("
             )
@@ -545,7 +528,6 @@ def generate_main_rs(config, legacy_info, native_info):
             code.append(f"    // Config for {comp_id}")
             code.append("    let config = InputConfig::default().with_pull(Pull::Up);")
             code.append(f"    let pin = Input::new(peripherals.GPIO{pin}, config);")
-
             code.append(
                 f"    let mut {comp_id} = crate::components::gpio_binary_sensor::GpioBinarySensor::new("
             )
@@ -583,6 +565,8 @@ def generate_main_rs(config, legacy_info, native_info):
 
 def generate_i2c_bridge_rs():
     return """
+#![allow(dead_code)]
+#![allow(unused_imports)]
 use core::slice;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
@@ -634,7 +618,6 @@ pub extern "C" fn rust_i2c_write(
     let bytes = unsafe { slice::from_raw_parts(data, len) };
 
     embassy_futures::block_on(async {
-        // Suppress Rust 2024 static_mut_refs warning (single-core safe in this context)
         #[allow(static_mut_refs)]
         let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
         match bus.write(addr, bytes).await {
@@ -691,6 +674,7 @@ pub extern "C" fn rust_i2c_write_read(
 
 def generate_gpio_switch_rs():
     return """
+#![allow(dead_code)]
 use esp_hal::gpio::Output;
 use embassy_sync::channel::Channel;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -747,6 +731,7 @@ impl GpioSwitch {
 
 def generate_gpio_binary_sensor_rs():
     return """
+#![allow(dead_code)]
 use esp_hal::gpio::Input;
 use embassy_time::{Duration, Timer};
 
@@ -789,25 +774,16 @@ impl GpioBinarySensor {
 
 
 def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
-    """
-    1. Runs PIO build.
-    2. Collects object files into libesphome.a.
-    3. Scans for ALL other .a libraries (from framework, wifi blobs, etc) and copies them to rust/libs/
-    """
     _LOGGER.info("Starting C++ compilation via PlatformIO...")
     esphome_build_dir = build_dir.parent
-
-    # 1. Run PIO Build
     subprocess.call(["pio", "run"], cwd=esphome_build_dir)
 
-    # 2. Setup Directories
     pio_dir = esphome_build_dir / ".pio" / "build"
     libs_dir = build_dir / "libs"
     if libs_dir.exists():
         shutil.rmtree(libs_dir)
     libs_dir.mkdir()
 
-    # Find environment dir
     env_dir = None
     if pio_dir.exists():
         for d in pio_dir.iterdir():
@@ -819,10 +795,7 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         _LOGGER.error("Could not find PlatformIO build environment in %s", pio_dir)
         return False
 
-    # 3. Create libesphome.a from .o files (Application Code)
     obj_files = []
-
-    # Walk only the 'src' subdirectory of the build environment
     src_build_dir = env_dir / "src"
     if src_build_dir.exists():
         for root, dirs, files in os.walk(src_build_dir):
@@ -857,16 +830,12 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         _LOGGER.error("Failed to archive libesphome.a: %s", e)
         return False
 
-    # 4. Gather Libraries
     _LOGGER.info("Gathering static libraries...")
-
-    # Copy PIO-built libraries (e.g. libmanaged_components.a)
     for root, dirs, files in os.walk(env_dir):
         for file in files:
             if file.endswith(".a") and file != "libesphome.a":
                 shutil.copy(Path(root) / file, libs_dir / file)
 
-    # RECURSIVE SEARCH for Binary Blobs in framework-espidf
     home = Path.home()
     framework_dir = home / ".platformio" / "packages" / "framework-espidf"
 
@@ -875,7 +844,6 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
             "Searching framework-espidf for precompiled blobs (folder: %s)...",
             blob_folder,
         )
-
         found_blobs = 0
         for root, dirs, files in os.walk(framework_dir):
             if Path(root).name == blob_folder or Path(root).name == "lib":
@@ -961,7 +929,6 @@ async def generate(config):
 
     cargo_config_dir = build_dir / ".cargo"
     cargo_config_dir.mkdir(exist_ok=True)
-    # Note: Linker scripts are not known yet (until after PIO build), so we write a base config
     write_file_if_changed(
         cargo_config_dir / "config.toml",
         generate_cargo_config(target_triple, toolchain_path, toolchain_prefix),
@@ -999,7 +966,6 @@ def compile(config):
     _LOGGER.info("Compiling Rust migration project in %s...", build_dir)
 
     variant_info = get_variant_info(config)
-    target_triple = variant_info["target"]
     toolchain_prefix = variant_info["toolchain"]
     blob_folder = variant_info["blob_folder"]
     toolchain_path = find_toolchain_path(toolchain_prefix)
@@ -1008,32 +974,8 @@ def compile(config):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
 
-    # POST-PROCESSING: Find linker scripts generated by PlatformIO
-    # PlatformIO puts them in .pio/build/<env>/
-    esphome_build_dir = build_dir.parent
-    pio_build_dir = esphome_build_dir / ".pio" / "build"
-    env_dir = None
-    if pio_build_dir.exists():
-        for d in pio_build_dir.iterdir():
-            if d.is_dir() and d.name != "project.checksum":
-                env_dir = d
-                break
-
-    ld_scripts = []
-    if env_dir:
-        for file in env_dir.iterdir():
-            if file.suffix == ".ld":
-                _LOGGER.info("Found PlatformIO linker script: %s", file.name)
-                ld_scripts.append(file.absolute())
-
-    # Update Cargo config with the found linker scripts
-    cargo_config_dir = build_dir / ".cargo"
-    write_file_if_changed(
-        cargo_config_dir / "config.toml",
-        generate_cargo_config(
-            target_triple, toolchain_path, toolchain_prefix, ld_scripts
-        ),
-    )
+    # Removed logic that automatically includes PlatformIO linker scripts
+    # to avoid "redefinition of memory region" errors.
 
     log_file = build_dir / "cargo_build.log"
     try:
