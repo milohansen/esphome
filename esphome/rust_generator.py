@@ -82,7 +82,6 @@ def find_toolchain_path(toolchain_prefix):
     if "riscv32" in toolchain_prefix:
         search_pattern = "toolchain-riscv32-esp*"
     elif "xtensa" in toolchain_prefix:
-        # Extract arch (esp32, esp32s2, etc) from prefix (xtensa-esp32s2-elf)
         arch = toolchain_prefix.split("-")[1]
         search_pattern = f"toolchain-xtensa-{arch}*"
     else:
@@ -171,48 +170,59 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("#include <atomic>")
     code.append("")
 
-    # Native Component Proxies
+    # 1. Add namespace esphome to match standard main.cpp behavior
+    # This fixes resolution for 'App', 'Component', and 'ENTITY_CATEGORY_CONFIG'
+    code.append("using namespace esphome;")
+    code.append("")
+
+    # 2. Forward declare Rust functions (extern "C")
+    # Collect them first to avoid generating an empty extern "C" {} block
+    rust_decls = []
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
-            code.append(f"class {comp_id}Proxy : public esphome::switch_::Switch {{")
+            rust_decls.append(f"void rust_set_{comp_id}_state(bool state);")
+
+    if rust_decls:
+        code.append('extern "C" {')
+        code.extend([f"    {decl}" for decl in rust_decls])
+        code.append("}")
+        code.append("")
+
+    # 3. Native Component Proxies (C++ Classes)
+    for comp_id, info in native_info.items():
+        if info["platform"] == "gpio_switch":
+            # Note: switch_::Switch is accessible because of 'using namespace esphome;'
+            code.append(f"class {comp_id}Proxy : public switch_::Switch {{")
             code.append(" public:")
             code.append("  void write_state(bool state) override {")
-            code.append(f"    extern void rust_set_{comp_id}_state(bool state);")
-            code.append(
-                "    rust_set_@comp_id@_state(state);".replace("@comp_id@", comp_id)
-            )
+            code.append(f"    rust_set_{comp_id}_state(state);")
             code.append("  }")
             code.append("  std::atomic<bool> shadow_state{false};")
             code.append("};")
             code.append(f"{comp_id}Proxy* {comp_id}_proxy = new {comp_id}Proxy();")
         elif info["platform"] == "gpio_binary_sensor":
-            code.append(
-                f"class {comp_id}Proxy : public esphome::binary_sensor::BinarySensor {{"
-            )
+            code.append(f"class {comp_id}Proxy : public binary_sensor::BinarySensor {{")
             code.append(" public:")
             code.append("  std::atomic<bool> shadow_state{false};")
             code.append("};")
             code.append(f"{comp_id}Proxy* {comp_id}_proxy = new {comp_id}Proxy();")
     code.append("")
 
-    # Legacy Globals
+    # 4. Legacy Component Globals
     for comp_id, info in legacy_info.items():
         code.append(f"// Globals for {comp_id}")
         code.append(info["global_code"])
 
+    # 5. Extern C Exports (C++ functions called by Rust)
     code.append('extern "C" {')
     code.append("")
     code.append("void call_component_loop(void* component_ptr) {")
-    code.append(
-        "    auto* component = static_cast<esphome::Component*>(component_ptr);"
-    )
+    code.append("    auto* component = static_cast<Component*>(component_ptr);")
     code.append("    component->loop();")
     code.append("}")
     code.append("")
     code.append("void call_component_setup(void* component_ptr) {")
-    code.append(
-        "    auto* component = static_cast<esphome::Component*>(component_ptr);"
-    )
+    code.append("    auto* component = static_cast<Component*>(component_ptr);")
     code.append("    component->setup();")
     code.append("}")
     code.append("")
@@ -220,7 +230,12 @@ def generate_bridge_cpp(legacy_info, native_info):
     # Factory functions
     for comp_id, info in legacy_info.items():
         code.append(f"void* create_{comp_id}() {{")
+        # Wrap setup code in a lambda. This allows 'return;' statements (used by SafeMode, etc.)
+        # to exit the lambda logic without causing a "return-statement with no value" error
+        # in this void* function.
+        code.append("    [&]() {")
         code.append(indent(info["setup_code"]))
+        code.append("    }();")
         code.append(f"    return static_cast<void*>({comp_id});")
         code.append("}")
         code.append("")
@@ -288,7 +303,6 @@ def generate_bridge_rs(legacy_info, native_info):
 
 
 def generate_cargo_toml(name, feature):
-    # Dynamically inject the correct feature for esp-hal and others
     return f"""
 [package]
 name = "{name}"
@@ -306,8 +320,6 @@ embassy-sync = "0.7.2"
 embassy-futures = "0.1.1"
 embedded-hal = "1.0"
 embedded-hal-async = "1.0"
-
-# ESP-specific dependencies with dynamic feature flag
 
 esp-backtrace = {{ version = "0.18.1", features = ["{feature}", "panic-handler", "println"] }}
 esp-bootloader-esp-idf = {{ version = "0.4.0", features = ["{feature}", "log-04"] }}
@@ -332,12 +344,20 @@ panic = "abort"
 """
 
 
-def generate_cargo_config(target_triple):
+def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
+    linker_line = ""
+    if toolchain_path:
+        linker = toolchain_path / f"{toolchain_prefix}-g++"
+        linker_line = f'linker = "{linker}"'
+    else:
+        linker_line = f'linker = "{toolchain_prefix}-g++"'
+
     return f"""
 [build]
 target = "{target_triple}"
 
 [target.{target_triple}]
+{linker_line}
 runner = "espflash flash --monitor"
 rustflags = [
   "-C", "link-arg=-Tlinkall.x",
@@ -347,14 +367,27 @@ rustflags = [
 
 
 def generate_build_rs():
+    # Looks for libesphome.a in the OUT_DIR or relative .pio path
     return """
+use std::env;
+use std::path::PathBuf;
+
 fn main() {
-    println!("cargo:rustc-link-search=native=../src/.pio/build/esp32dev");
+    // libesphome.a is now created by the rust_generator.py script
+    // and placed in the .pio/build folder (or root).
+
+    // We expect libesphome.a to be in the pio build directory
+    println!("cargo:rustc-link-search=native=../../../.pio/build");
+
+    // Also search current dir just in case
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    println!("cargo:rustc-link-search=native={}", manifest_dir);
+
     println!("cargo:rustc-link-lib=static=esphome");
     println!("cargo:rustc-link-lib=stdc++");
 
     println!("cargo:rustc-link-arg=-Wl,--whole-archive");
-    println!("cargo:rustc-link-arg=-libesphome.a");
+    println!("cargo:rustc-link-arg=-lesphome");
     println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 }
 """
@@ -373,7 +406,6 @@ def generate_main_rs(config, legacy_info, native_info):
     code.append("use static_cell::StaticCell;")
     code.append("use embassy_executor::Spawner;")
     code.append("use esp_backtrace as _;")
-    # Updated imports for esp-hal 1.0.0
     code.append("use esp_hal::{")
     code.append("    timer::timg::TimerGroup,")
     code.append("    interrupt::software::SoftwareInterruptControl,")
@@ -412,7 +444,6 @@ def generate_main_rs(config, legacy_info, native_info):
 
             code.append(f"    // Initialize I2C bus {i}")
             periph = f"I2C{i}"
-            # Updated I2C Initialization for v1.0.0
             code.append(f"    let i2c{i} = esp_hal::i2c::master::I2c::new(")
             code.append(f"        peripherals.{periph},")
             code.append("        esp_hal::i2c::master::Config::default()")
@@ -488,7 +519,6 @@ def generate_main_rs(config, legacy_info, native_info):
     code.append("}")
     code.append("")
 
-    # Tasks
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
             code.append("#[embassy_executor::task]")
@@ -511,9 +541,6 @@ def generate_main_rs(config, legacy_info, native_info):
     code.append("}")
 
     return "\n".join(code)
-
-
-# --- INLINED COMPONENT CONTENT FOR ESP-HAL 1.0.0 COMPATIBILITY ---
 
 
 def generate_i2c_bridge_rs():
@@ -557,7 +584,6 @@ impl AsyncI2cBus {
     }
 }
 
-// Global I2C bus instance (unsafe static for FFI compatibility)
 pub static mut I2C_BUS: Option<AsyncI2cBus> = None;
 
 #[no_mangle]
@@ -569,8 +595,6 @@ pub extern "C" fn rust_i2c_write(
     if data.is_null() || len == 0 { return -1; }
     let bytes = unsafe { slice::from_raw_parts(data, len) };
 
-    // UNSAFE: Calling async from sync via blocking.
-    // Assumes single threaded or critical section handled by C++ caller or internal mutex logic.
     embassy_futures::block_on(async {
         let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
         match bus.write(addr, bytes).await {
@@ -722,12 +746,99 @@ impl GpioBinarySensor {
 """
 
 
+def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix):
+    """
+    Builds the C++ code using PlatformIO (ignoring link errors) and archives
+    objects into libesphome.a
+    """
+    _LOGGER.info("Starting C++ compilation via PlatformIO...")
+
+    # 1. Run PIO Build (expect failure at link stage due to duplicate main or missing symbols)
+    # We ignore the return code because we only care about the object files.
+    # Note: We must run this in the root build directory (parent of rust/)
+    esphome_build_dir = build_dir.parent
+
+    # We assume 'pio' is in PATH. If not, user might need to activate venv.
+    # We run 'pio run' which builds the default environment.
+    subprocess.call(["pio", "run"], cwd=esphome_build_dir)
+
+    # 2. Find object files
+    # The .pio directory is in esphome_build_dir/.pio
+    pio_dir = esphome_build_dir / ".pio" / "build"
+
+    # Find the environment directory (first subdir in build/)
+    env_dir = None
+    if pio_dir.exists():
+        for d in pio_dir.iterdir():
+            if d.is_dir() and d.name != "project.checksum":
+                env_dir = d
+                break
+
+    if not env_dir:
+        _LOGGER.error("Could not find PlatformIO build environment in %s", pio_dir)
+        return False
+
+    _LOGGER.info("Found PlatformIO environment at %s", env_dir)
+
+    # Gather .o files
+    # We want src/*.o (project code + bridge) and lib/* (dependencies)
+    # We might also need objects from the core if they are compiled into src/
+
+    obj_files = []
+    # Recursively find all .o files in the environment build dir
+    for root, dirs, files in os.walk(env_dir):
+        obj_files.extend(
+            os.path.join(root, file) for file in files if file.endswith(".o")
+        )
+
+    if not obj_files:
+        _LOGGER.error(
+            "No object files found in %s. PlatformIO build likely failed early.",
+            env_dir,
+        )
+        return False
+
+    _LOGGER.info(
+        "Found %d object files. Archiving into libesphome.a...", len(obj_files)
+    )
+
+    # 3. Archive into libesphome.a
+    lib_path = build_dir / "libesphome.a"
+    if lib_path.exists():
+        lib_path.unlink()
+
+    # Find 'ar' tool
+    ar_tool = "ar"
+    if toolchain_path:
+        ar_tool = toolchain_path / f"{toolchain_prefix}-ar"
+
+    # Run ar rcs libesphome.a <files>
+    # Note: Command line length limit might be hit if too many files.
+    # Can pass files in chunks if necessary, but typical ESPHome project fits.
+
+    # Using 'rcs' flags: replace, create, sort index
+    cmd = [str(ar_tool), "rcs", str(lib_path)] + obj_files
+
+    try:
+        subprocess.check_call(cmd)
+        _LOGGER.info("Successfully created %s", lib_path)
+
+        # Also copy it to the pio build dir just in case build.rs looks there
+        shutil.copy(lib_path, pio_dir / "libesphome.a")
+
+        return True
+    except Exception as e:
+        _LOGGER.error("Failed to archive library: %s", e)
+        return False
+
+
 async def generate(config):
     _LOGGER.info("Generating Rust migration bridge...")
 
     variant_info = get_variant_info(config)
     target_triple = variant_info["target"]
     rust_feature = variant_info["feature"]
+    toolchain_prefix = variant_info["toolchain"]
 
     _LOGGER.info(
         "Detected variant: %s, feature: %s, target: %s",
@@ -735,6 +846,8 @@ async def generate(config):
         rust_feature,
         target_triple,
     )
+
+    toolchain_path = find_toolchain_path(toolchain_prefix)
 
     legacy, native = classify_components(config)
 
@@ -765,7 +878,6 @@ async def generate(config):
     src_dir = Path(CORE.build_path) / "src"
     src_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generated files
     write_file_if_changed(
         src_dir / "bridge.cpp", generate_bridge_cpp(legacy_info, native_info)
     )
@@ -787,21 +899,19 @@ async def generate(config):
     cargo_config_dir = build_dir / ".cargo"
     cargo_config_dir.mkdir(exist_ok=True)
     write_file_if_changed(
-        cargo_config_dir / "config.toml", generate_cargo_config(target_triple)
+        cargo_config_dir / "config.toml",
+        generate_cargo_config(target_triple, toolchain_path, toolchain_prefix),
     )
 
-    # Static files (copied or generated)
     embhome_dir = Path("embhome")
     if (embhome_dir / "legacy_wrapper.rs").exists():
         shutil.copy(embhome_dir / "legacy_wrapper.rs", build_dir / "legacy_wrapper.rs")
 
     shims_dir = build_dir / "component_shims"
     shims_dir.mkdir(exist_ok=True)
-    # Generate corrected i2c bridge
     write_file_if_changed(shims_dir / "i2c_bridge.rs", generate_i2c_bridge_rs())
     write_file_if_changed(shims_dir / "mod.rs", "pub mod i2c_bridge;\n")
 
-    # Copy C++ i2c shim to src/
     if (embhome_dir / "component_shims" / "i2c_shim.cpp").exists():
         shutil.copy(
             embhome_dir / "component_shims" / "i2c_shim.cpp", src_dir / "i2c_shim.cpp"
@@ -809,7 +919,6 @@ async def generate(config):
 
     comp_dir = build_dir / "components"
     comp_dir.mkdir(exist_ok=True)
-    # Generate corrected components
     write_file_if_changed(comp_dir / "gpio_switch.rs", generate_gpio_switch_rs())
     write_file_if_changed(
         comp_dir / "gpio_binary_sensor.rs", generate_gpio_binary_sensor_rs()
@@ -824,6 +933,15 @@ async def generate(config):
 def compile(config):
     build_dir = Path(CORE.build_path) / "rust"
     _LOGGER.info("Compiling Rust migration project in %s...", build_dir)
+
+    variant_info = get_variant_info(config)
+    toolchain_prefix = variant_info["toolchain"]
+    toolchain_path = find_toolchain_path(toolchain_prefix)
+
+    # NEW: Build C++ static library first
+    if not build_cpp_lib(build_dir, toolchain_path, toolchain_prefix):
+        _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
+        return 1
 
     try:
         rc = subprocess.call(["cargo", "build", "--release"], cwd=build_dir)
