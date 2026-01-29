@@ -343,9 +343,10 @@ def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
         "link-arg=-Tlinkall.x",
         "-C",
         "link-arg=-nostartfiles",
+        # Allow multiple definitions to handle overlap between ESP-IDF blobs and Rust
         "-C",
-        "link-arg=-Wl,-z,muldefs",
-        # Force the linker to look in the standard library directories
+        "link-arg=-Wl,--allow-multiple-definition",
+        # Force linker to look in current dir (for build.rs artifacts)
         "-C",
         "link-arg=-L.",
     ]
@@ -366,7 +367,8 @@ rustflags = [
 
 
 def generate_build_rs():
-    # Major fix: Explicitly link libesphome and ALL system libraries inside the start-group block
+    # CRITICAL: Use rustc-link-arg=-l<name> inside start-group.
+    # This solves the circular dependencies (undefined refs) WITHOUT conflicting memory maps.
     return """
 use std::env;
 use std::path::PathBuf;
@@ -379,15 +381,10 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", libs_dir.display());
 
     // START LINKER GROUP
-    // This is the most robust way to handle the circular dependencies between:
-    // 1. Rust Application Code
-    // 2. C++ Application Code (libesphome)
-    // 3. ESP-IDF Framework Libraries (blobs and archives)
-    // 4. Standard System Libraries (libc, libm, libgcc, libstdc++)
+    // Resolves circular dependencies: libesphome <-> libfreertos <-> libwifi
     println!("cargo:rustc-link-arg=-Wl,--start-group");
 
     // 1. Link libesphome.a (Application code)
-    // We use whole-archive for this one to ensure C++ constructors/hooks are preserved
     println!("cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:rustc-link-arg=-lesphome");
     println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
@@ -401,7 +398,8 @@ fn main() {
                     if let Some(stem) = path.file_stem() {
                         let name = stem.to_string_lossy();
                         if name.starts_with("lib") && name != "libesphome" && name != "libmain" {
-                            println!("cargo:rustc-link-lib=static={}", &name[3..]);
+                            // Using link-arg=-l forces it into the group
+                            println!("cargo:rustc-link-arg=-l{}", &name[3..]);
                         }
                     }
                 }
@@ -410,10 +408,11 @@ fn main() {
     }
 
     // 3. Link Standard C/C++ Libraries (System) inside the group
-    println!("cargo:rustc-link-lib=static=stdc++");
-    println!("cargo:rustc-link-lib=static=c");
-    println!("cargo:rustc-link-lib=static=m");
-    println!("cargo:rustc-link-lib=static=gcc");
+    // Needed for new/delete, math, standard IO stubs
+    println!("cargo:rustc-link-arg=-lstdc++");
+    println!("cargo:rustc-link-arg=-lc");
+    println!("cargo:rustc-link-arg=-lm");
+    println!("cargo:rustc-link-arg=-lgcc");
 
     // END LINKER GROUP
     println!("cargo:rustc-link-arg=-Wl,--end-group");
@@ -854,7 +853,6 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         )
         found_blobs = 0
         for root, dirs, files in os.walk(framework_dir):
-            # Widened search: grab blobs from 'lib' folders and the specific variant folder
             if Path(root).name == blob_folder or Path(root).name == "lib":
                 for file in files:
                     if file.endswith(".a"):
@@ -982,6 +980,10 @@ def compile(config):
     if not build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
+
+    # REMOVED: Manual search for PlatformIO linker scripts.
+    # We rely on Rust's esp-hal to provide the memory map (linkall.x).
+    # The build.rs modification (Group Linking) handles the undefined symbols.
 
     log_file = build_dir / "cargo_build.log"
     try:
