@@ -147,8 +147,10 @@ def generate_rust_project(config, output_dir: Path):
 
     # Determine chip/features
     chip = "esp32"
-    if config["esphome"].get("board") in ["esp32-c3-devkitm-1"]:
-        chip = "esp32c3"
+    board = config["esphome"].get("board", "esp32")
+    board_parts = board.split("-")
+    if board_parts[0] == "esp32" and board_parts[1] in ["c3", "s2", "s3"]:
+        chip = f"esp32{board_parts[1]}"
 
     # Adjust paths to point to the repo root from build dir
     # rust_root = Path(os.getcwd()) / "esphome/rust"
@@ -166,46 +168,57 @@ def generate_rust_project(config, output_dir: Path):
     )
 
     # HAL Dependencies
-    gen.add_dependency(RustDependency("esp-hal", "0.22.0", features=[chip]))
+    # TODO: adjust psram feature based on board capabilities
+    # PSRAM is quad by default, can be configured to octal via ESP_HAL_CONFIG_PSRAM_MODE
     gen.add_dependency(
-        RustDependency("esp-hal-embassy", "0.5.0", features=[chip, "log"])
+        RustDependency("esp-hal", "1.0", features=[chip, "log-04", "psram", "unstable"])
     )
 
-    executor_features = ["task-arena-size-32768"]
-    if chip == "esp32c3":
-        executor_features.append("arch-riscv32")
-        executor_features.append("executor-thread")
-    else:
-        executor_features.append("arch-xtensa")
-        executor_features.append("executor-thread")
+    # TODO: enable "internal-heap-stats" feature based on config debug level
+    gen.add_dependency(RustDependency("esp-alloc", "0.9", features=[chip]))
 
     gen.add_dependency(
-        RustDependency("embassy-executor", "0.6.0", features=executor_features)
+        # TODO: conditionally add rtos-trace feature based on config debug level
+        RustDependency(
+            "esp-rtos",
+            "0.2.0",
+            features=[chip, "embassy", "log-04", "esp-alloc", "esp-radio"],
+        )
+    )
+
+    # executor_features = ["task-arena-size-32768", "executor-thread", "arch-riscv32"]
+    # if chip == "esp32c3":
+    #     executor_features.append("arch-riscv32")
+    # else:
+    #     executor_features.append("arch-xtensa")
+
+    gen.add_dependency(
+        # Note: Do not enable any `arch-*` features here, they are selected by esp-rtos
+        # see: https://docs.espressif.com/projects/rust/esp-rtos/0.2.0/esp32c3/esp_rtos/index.html#setup
+        RustDependency("embassy-executor", "0.9.1", features=["executor-thread", "log"])
     )
     gen.add_dependency(RustDependency("log", "0.4"))
     gen.add_dependency(
         RustDependency(
             "esp-backtrace",
             "0.14.2",
-            features=[chip, "exception-handler", "panic-handler", "println"],
+            features=[chip, "panic-handler", "println"],
         )
     )
     gen.add_dependency(RustDependency("static_cell", "2.1.0"))
 
     # App Setup
     app_name = config["esphome"][CONF_NAME]
-    platform_enum = "Esp32"
-    if chip == "esp32c3":
-        platform_enum = "Esp32c3"
 
     gen.add_main_code(
-        f'let mut app = Application::new("{app_name}", Platform::{platform_enum});'
+        f'let mut app = Application::new("{app_name}", Platform::{chip.capitalize()});'
     )
     gen.add_main_code('app.init().await.expect("App init failed");')
     gen.add_main_code(
         "let io = esp_hal::gpio::IO::new(peripherals.GPIO, peripherals.IO_MUX);"
     )
 
+    radio_features: list[str] | None = None
     # WiFi Setup
     # stack_var = "stack"
     if "wifi" in config:
@@ -218,9 +231,7 @@ def generate_rust_project(config, output_dir: Path):
                 features=[chip],
             )
         )
-        gen.add_dependency(
-            RustDependency("esp-wifi", "0.11.0", features=[chip, "embassy-net"])
-        )
+        radio_features = ["wifi"]
         gen.add_dependency(RustDependency("esp-alloc", "0.5.0"))
         gen.add_dependency(
             RustDependency(
@@ -311,8 +322,12 @@ def generate_rust_project(config, output_dir: Path):
         gen.add_component_spawn(
             "spawner.spawn(esphome_wifi::connection_task(controller, wifi_config)).unwrap();"
         )
-    # else:
-    #     stack_var = "None"
+
+    if radio_features:
+        gen.add_dependency(
+            RustDependency("esp-radio", "0.17.0", features=[*radio_features, "log-04"])
+        )
+        gen.add_dependency(RustDependency("esp-radio-rtos-driver", "0.2.0"))
 
     # API Setup
     if "api" in config:
@@ -323,7 +338,7 @@ def generate_rust_project(config, output_dir: Path):
         )
         gen.add_dependency(
             RustDependency(
-                "prost", "0.13.0", default_features=False, features=["alloc"]
+                "prost", "0.14.3", default_features=False, features=["alloc"]
             )
         )
         gen.add_component_spawn(
