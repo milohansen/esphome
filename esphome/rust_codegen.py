@@ -150,19 +150,19 @@ def generate_rust_project(config, output_dir: Path):
     if config["esphome"].get("board") in ["esp32-c3-devkitm-1"]:
         chip = "esp32c3"
 
-    rust_root = Path(os.getcwd()) / "esphome/rust"
+    # Adjust paths to point to the repo root from build dir
+    # rust_root = Path(os.getcwd()) / "esphome/rust"
+    rust_root = Path(os.getcwd()) / "embhome"
 
     # Core Dependencies
     gen.add_dependency(
-        RustDependency("esphome-core", "0.1.0", path=str(rust_root / "esphome-core"))
+        RustDependency("esphome-core", "0.1.0", path=str(rust_root / "core"))
     )
     gen.add_dependency(
-        RustDependency("esphome-hal", "0.1.0", path=str(rust_root / "esphome-hal"))
+        RustDependency("esphome-hal", "0.1.0", path=str(rust_root / "hal"))
     )
     gen.add_dependency(
-        RustDependency(
-            "esphome-config", "0.1.0", path=str(rust_root / "esphome-config")
-        )
+        RustDependency("esphome-config", "0.1.0", path=str(rust_root / "config"))
     )
 
     # HAL Dependencies
@@ -214,7 +214,7 @@ def generate_rust_project(config, output_dir: Path):
             RustDependency(
                 "esphome-wifi",
                 "0.1.0",
-                path=str(rust_root / "esphome-wifi"),
+                path=str(rust_root / "components/wifi"),
                 features=[chip],
             )
         )
@@ -317,7 +317,9 @@ def generate_rust_project(config, output_dir: Path):
     # API Setup
     if "api" in config:
         gen.add_dependency(
-            RustDependency("esphome-api", "0.1.0", path=str(rust_root / "esphome-api"))
+            RustDependency(
+                "esphome-api", "0.1.0", path=str(rust_root / "components/api")
+            )
         )
         gen.add_dependency(
             RustDependency(
@@ -331,7 +333,9 @@ def generate_rust_project(config, output_dir: Path):
     # OTA Setup
     if "ota" in config:
         gen.add_dependency(
-            RustDependency("esphome-ota", "0.1.0", path=str(rust_root / "esphome-ota"))
+            RustDependency(
+                "esphome-ota", "0.1.0", path=str(rust_root / "components/ota")
+            )
         )
         gen.add_component_spawn(
             "spawner.spawn(esphome_ota::ota_server(stack)).unwrap();"
@@ -341,18 +345,19 @@ def generate_rust_project(config, output_dir: Path):
     if "switch" in config:
         gen.add_dependency(
             RustDependency(
-                "esphome-gpio", "0.1.0", path=str(rust_root / "esphome-gpio")
+                "esphome-gpio", "0.1.0", path=str(rust_root / "components/gpio")
             )
         )
         for i, conf in enumerate(config["switch"]):
             if conf.get("platform") == "gpio":
                 generate_gpio_switch(gen, conf, i)
 
-    if "binary_sensor" in config:
-        if "esphome-gpio" not in [d.name for d in gen.dependencies]:
+        if "binary_sensor" in config and "esphome-gpio" not in [
+            d.name for d in gen.dependencies
+        ]:
             gen.add_dependency(
                 RustDependency(
-                    "esphome-gpio", "0.1.0", path=str(rust_root / "esphome-gpio")
+                    "esphome-gpio", "0.1.0", path=str(rust_root / "components/gpio")
                 )
             )
         for i, conf in enumerate(config["binary_sensor"]):
@@ -367,14 +372,14 @@ def generate_rust_project(config, output_dir: Path):
                         RustDependency(
                             "esphome-uptime",
                             "0.1.0",
-                            path=str(rust_root / "esphome-uptime"),
+                            path=str(rust_root / "components/uptime"),
                         )
                     )
                     gen.add_dependency(
                         RustDependency(
                             "esphome-sensor",
                             "0.1.0",
-                            path=str(rust_root / "esphome-sensor"),
+                            path=str(rust_root / "components/sensor"),
                         )
                     )
                 generate_uptime_sensor(gen, conf, i)

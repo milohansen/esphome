@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-esphome-core = { path = "../esphome-core" }
+esphome-core = { path = "../../core" }
 log = "0.4"
 heapless = "0.8"

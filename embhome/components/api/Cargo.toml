@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-esphome-core = { path = "../esphome-core" }
-esphome-config = { path = "../esphome-config" }
-esphome-wifi = { path = "../esphome-wifi" }
+esphome-core = { path = "../../core" }
+esphome-config = { path = "../../config" }
+esphome-wifi = { path = "../wifi" }
 embassy-net = { version = "0.6.0", features = ["tcp"] }
 embassy-executor = "0.6.0"
 embassy-time = "0.3.2"

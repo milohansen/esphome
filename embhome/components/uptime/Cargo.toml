@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-esphome-core = { path = "../esphome-core" }
-esphome-sensor = { path = "../esphome-sensor" }
+esphome-core = { path = "../../core" }
+esphome-sensor = { path = "../sensor" }
 embassy-time = "0.3.2"
 embassy-executor = "0.6.0"
 async-trait = "0.1"

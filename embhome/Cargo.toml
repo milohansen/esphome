@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "hal",
+    "config",
+    "components/gpio",
+    "components/wifi",
+    "components/api",
+    "components/ota",
+    "components/sensor",
+    "components/uptime",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1
