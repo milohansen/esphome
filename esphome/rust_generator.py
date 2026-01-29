@@ -337,7 +337,7 @@ def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
     else:
         linker_line = f'linker = "{toolchain_prefix}-g++"'
 
-    # Fix for multiple definitions (e.g. rtc_clk, stack_chk) between Rust and IDF archives
+    # Fix for multiple definitions and undefined references
     flags = [
         "-C",
         "link-arg=-Tlinkall.x",
@@ -345,6 +345,9 @@ def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
         "link-arg=-nostartfiles",
         "-C",
         "link-arg=-Wl,-z,muldefs",
+        # Force the linker to look in the standard library directories
+        "-C",
+        "link-arg=-L.",
     ]
 
     rustflags_str = ", ".join([f'"{f}"' for f in flags])
@@ -363,7 +366,7 @@ rustflags = [
 
 
 def generate_build_rs():
-    # Keep the --start-group fix for circular dependencies
+    # Major fix: Explicitly link libesphome and ALL system libraries inside the start-group block
     return """
 use std::env;
 use std::path::PathBuf;
@@ -375,15 +378,21 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", libs_dir.display());
 
-    // 1. Start the linker group
+    // START LINKER GROUP
+    // This is the most robust way to handle the circular dependencies between:
+    // 1. Rust Application Code
+    // 2. C++ Application Code (libesphome)
+    // 3. ESP-IDF Framework Libraries (blobs and archives)
+    // 4. Standard System Libraries (libc, libm, libgcc, libstdc++)
     println!("cargo:rustc-link-arg=-Wl,--start-group");
 
-    // 2. Link libesphome.a (Application code)
+    // 1. Link libesphome.a (Application code)
+    // We use whole-archive for this one to ensure C++ constructors/hooks are preserved
     println!("cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:rustc-link-arg=-lesphome");
     println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
-    // 3. Link all framework libraries found in libs/
+    // 2. Link all framework libraries found in libs/
     if let Ok(entries) = fs::read_dir(&libs_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -391,7 +400,6 @@ fn main() {
                 if ext == "a" {
                     if let Some(stem) = path.file_stem() {
                         let name = stem.to_string_lossy();
-                        // Skip libesphome (already linked) and libmain (conflicts)
                         if name.starts_with("lib") && name != "libesphome" && name != "libmain" {
                             println!("cargo:rustc-link-lib=static={}", &name[3..]);
                         }
@@ -401,13 +409,13 @@ fn main() {
         }
     }
 
-    // 4. Link Standard C/C++ Libraries (System)
+    // 3. Link Standard C/C++ Libraries (System) inside the group
     println!("cargo:rustc-link-lib=static=stdc++");
     println!("cargo:rustc-link-lib=static=c");
     println!("cargo:rustc-link-lib=static=m");
     println!("cargo:rustc-link-lib=static=gcc");
 
-    // 5. End the linker group
+    // END LINKER GROUP
     println!("cargo:rustc-link-arg=-Wl,--end-group");
 }
 """
@@ -846,6 +854,7 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         )
         found_blobs = 0
         for root, dirs, files in os.walk(framework_dir):
+            # Widened search: grab blobs from 'lib' folders and the specific variant folder
             if Path(root).name == blob_folder or Path(root).name == "lib":
                 for file in files:
                     if file.endswith(".a"):
@@ -973,9 +982,6 @@ def compile(config):
     if not build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
-
-    # Removed logic that automatically includes PlatformIO linker scripts
-    # to avoid "redefinition of memory region" errors.
 
     log_file = build_dir / "cargo_build.log"
     try:
