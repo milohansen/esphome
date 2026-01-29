@@ -2,9 +2,10 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import subprocess
 
 from esphome.config import iter_component_configs
-from esphome.const import CONF_ID, CONF_PLATFORM
+from esphome.const import CONF_ID, CONF_PLATFORM, CONF_VARIANT
 from esphome.core import CORE
 from esphome.helpers import indent, write_file_if_changed
 
@@ -15,6 +16,93 @@ NATIVE_COMPONENTS = {
     "gpio_switch": "GpioSwitch",
     "gpio_binary_sensor": "GpioBinarySensor",
 }
+
+# Mapping of ESPHome variants to Rust Target Triples, Feature Flags, and Toolchain prefixes
+VARIANT_MAP = {
+    "esp32": {
+        "target": "xtensa-esp32-none-elf",
+        "feature": "esp32",
+        "toolchain": "xtensa-esp32-elf",
+    },
+    "esp32s2": {
+        "target": "xtensa-esp32s2-none-elf",
+        "feature": "esp32s2",
+        "toolchain": "xtensa-esp32s2-elf",
+    },
+    "esp32s3": {
+        "target": "xtensa-esp32s3-none-elf",
+        "feature": "esp32s3",
+        "toolchain": "xtensa-esp32s3-elf",
+    },
+    "esp32c3": {
+        "target": "riscv32imc-unknown-none-elf",
+        "feature": "esp32c3",
+        "toolchain": "riscv32-esp-elf",
+    },
+    "esp32c6": {
+        "target": "riscv32imac-unknown-none-elf",
+        "feature": "esp32c6",
+        "toolchain": "riscv32-esp-elf",
+    },
+    "esp32h2": {
+        "target": "riscv32imac-unknown-none-elf",
+        "feature": "esp32h2",
+        "toolchain": "riscv32-esp-elf",
+    },
+}
+
+
+def get_variant_info(config):
+    if "esp32" in config:
+        variant = config["esp32"].get(CONF_VARIANT)
+        if variant:
+            variant = variant.lower()
+            if variant in VARIANT_MAP:
+                return VARIANT_MAP[variant]
+    _LOGGER.warning(
+        "Could not determine ESP32 variant from config, defaulting to generic esp32"
+    )
+    return VARIANT_MAP["esp32"]
+
+
+def find_toolchain_path(toolchain_prefix):
+    """
+    Locate the bin directory for the given toolchain prefix (e.g., riscv32-esp-elf).
+    Checks system PATH first, then standard PlatformIO locations.
+    """
+    compiler_name = f"{toolchain_prefix}-g++"
+
+    # 1. Check if it's already in PATH
+    if shutil.which(compiler_name):
+        return None  # None means "use system path"
+
+    # 2. Check PlatformIO packages
+    pio_packages = Path(os.path.expanduser("~/.platformio/packages"))
+
+    if "riscv32" in toolchain_prefix:
+        search_pattern = "toolchain-riscv32-esp*"
+    elif "xtensa" in toolchain_prefix:
+        # Extract arch (esp32, esp32s2, etc) from prefix (xtensa-esp32s2-elf)
+        arch = toolchain_prefix.split("-")[1]
+        search_pattern = f"toolchain-xtensa-{arch}*"
+    else:
+        search_pattern = "toolchain-*"
+
+    potential_paths = list(pio_packages.glob(search_pattern))
+
+    for p in potential_paths:
+        bin_dir = p / "bin"
+        if (bin_dir / compiler_name).exists() or (
+            bin_dir / f"{compiler_name}.exe"
+        ).exists():
+            _LOGGER.info("Found toolchain at %s", bin_dir)
+            return bin_dir
+
+    _LOGGER.warning(
+        "Could not locate toolchain for %s. Compilation may fail if not in PATH.",
+        compiler_name,
+    )
+    return None
 
 
 def classify_components(config):
@@ -38,14 +126,12 @@ def classify_components(config):
 
 
 async def capture_component_code(domain, component, conf):
-    # Save current CORE state
     old_main = CORE.main_statements
     old_global = CORE.global_statements
     old_component_ids = CORE.component_ids.copy()
     CORE.main_statements = []
     CORE.global_statements = []
 
-    # Monkey-patch register_variable to avoid "already registered" errors
     old_register = CORE.register_variable
     CORE.register_variable = lambda id, obj: None
 
@@ -62,19 +148,15 @@ async def capture_component_code(domain, component, conf):
     cg_module.register_component = dummy_register_component
 
     try:
-        # Run to_code
         await component.to_code(conf)
     finally:
-        # Restore monkey-patches
         CORE.register_variable = old_register
         cpp_helpers.register_component = old_register_component
         cg_module.register_component = old_cg_register_component
 
-    # Capture generated code
     setup_code = CORE.cpp_main_section
     global_code = CORE.cpp_global_section
 
-    # Restore CORE state
     CORE.main_statements = old_main
     CORE.global_statements = old_global
     CORE.component_ids = old_component_ids
@@ -113,15 +195,13 @@ def generate_bridge_cpp(legacy_info, native_info):
             code.append(f"{comp_id}Proxy* {comp_id}_proxy = new {comp_id}Proxy();")
     code.append("")
 
-    # All captured globals for legacy
+    # Legacy Globals
     for comp_id, info in legacy_info.items():
         code.append(f"// Globals for {comp_id}")
         code.append(info["global_code"])
 
     code.append('extern "C" {')
     code.append("")
-
-    # Generic loop caller
     code.append("void call_component_loop(void* component_ptr) {")
     code.append(
         "    auto* component = static_cast<esphome::Component*>(component_ptr);"
@@ -129,8 +209,6 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("    component->loop();")
     code.append("}")
     code.append("")
-
-    # Generic setup caller
     code.append("void call_component_setup(void* component_ptr) {")
     code.append(
         "    auto* component = static_cast<esphome::Component*>(component_ptr);"
@@ -139,7 +217,7 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("}")
     code.append("")
 
-    # Factory functions for legacy components
+    # Factory functions
     for comp_id, info in legacy_info.items():
         code.append(f"void* create_{comp_id}() {{")
         code.append(indent(info["setup_code"]))
@@ -147,7 +225,7 @@ def generate_bridge_cpp(legacy_info, native_info):
         code.append("}")
         code.append("")
 
-    # Shadow update functions for native components
+    # Shadow update functions
     for comp_id, info in native_info.items():
         code.append(f"void update_shadow_{comp_id}(bool state) {{")
         code.append(
@@ -175,7 +253,6 @@ def generate_bridge_rs(legacy_info, native_info):
     code.append("}")
     code.append("")
 
-    # Static lookup
     code.append("pub static mut LEGACY_COMPONENTS: &[(&str, *mut c_void)] = &[];")
     code.append("")
     code.append("pub fn get_legacy_component(id: &str) -> Option<*mut c_void> {")
@@ -187,7 +264,6 @@ def generate_bridge_rs(legacy_info, native_info):
     code.append("    None")
     code.append("}")
 
-    # Shadow update FFI
     code.extend(
         [
             f'extern "C" {{ pub fn update_shadow_{comp_id}(state: bool); }}'
@@ -195,7 +271,6 @@ def generate_bridge_rs(legacy_info, native_info):
         ]
     )
 
-    # FFI for C++ calling Rust
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
             code.append(
@@ -212,77 +287,37 @@ def generate_bridge_rs(legacy_info, native_info):
     return "\n".join(code)
 
 
-def generate_cargo_toml(name):
+def generate_cargo_toml(name, feature):
+    # Dynamically inject the correct feature for esp-hal and others
     return f"""
 [package]
 name = "{name}"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [[bin]]
 name = "{name}"
 path = "main.rs"
-
-# TODO: set target-features for the actual board being used
 
 [dependencies]
 embassy-executor = {{ version = "0.9.1", features = ["executor-thread"] }}
 embassy-time = {{ version = "0.5.0", features = ["generic-queue-8"] }}
 embassy-sync = "0.7.2"
 embassy-futures = "0.1.1"
-esp-backtrace = {{ version = "0.18.1", features = ["panic-handler", "println"] }}
-esp-bootloader-esp-idf = {{ version = "0.4.0", features = ["log-04"] }}
-esp-hal = {{ version = "1.0.0", features = ["unstable"] }}
-esp-rtos = {{ version = "0.2.0", features = ["embassy", "log-04"] }}
-esp-println = {{ version = "0.16.1", features = ["log-04"] }}
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
+
+# ESP-specific dependencies with dynamic feature flag
+
+esp-backtrace = {{ version = "0.18.1", features = ["{feature}", "panic-handler", "println"] }}
+esp-bootloader-esp-idf = {{ version = "0.4.0", features = ["{feature}", "log-04"] }}
+esp-hal = {{ version = "1.0.0", features = ["{feature}", "unstable"] }}
+esp-rtos = {{ version = "0.2.0", features = ["{feature}", "embassy", "log-04"] }}
+esp-println = {{ version = "0.16.1", features = ["{feature}", "log-04"] }}
 
 log = "0.4"
 static_cell = "2.1"
 critical-section = "1.2"
-
-[features]
-esp32 = [
-    "esp-backtrace/esp32",
-    "esp-bootloader-esp-idf/esp32",
-    "esp-rtos/esp32",
-    "esp-hal/esp32",
-]
-esp32c2 = [
-    "esp-backtrace/esp32c2",
-    "esp-bootloader-esp-idf/esp32c2",
-    "esp-rtos/esp32c2",
-    "esp-hal/esp32c2",
-]
-esp32c3 = [
-    "esp-backtrace/esp32c3",
-    "esp-bootloader-esp-idf/esp32c3",
-    "esp-rtos/esp32c3",
-    "esp-hal/esp32c3",
-]
-esp32c6 = [
-    "esp-backtrace/esp32c6",
-    "esp-bootloader-esp-idf/esp32c6",
-    "esp-rtos/esp32c6",
-    "esp-hal/esp32c6",
-]
-esp32h2 = [
-    "esp-backtrace/esp32h2",
-    "esp-bootloader-esp-idf/esp32h2",
-    "esp-rtos/esp32h2",
-    "esp-hal/esp32h2",
-]
-esp32s2 = [
-    "esp-backtrace/esp32s2",
-    "esp-bootloader-esp-idf/esp32s2",
-    "esp-rtos/esp32s2",
-    "esp-hal/esp32s2",
-]
-esp32s3 = [
-    "esp-backtrace/esp32s3",
-    "esp-bootloader-esp-idf/esp32s3",
-    "esp-rtos/esp32s3",
-    "esp-hal/esp32s3",
-]
 
 [build-dependencies]
 bindgen = "0.72"
@@ -297,44 +332,27 @@ panic = "abort"
 """
 
 
+def generate_cargo_config(target_triple):
+    return f"""
+[build]
+target = "{target_triple}"
+
+[target.{target_triple}]
+runner = "espflash flash --monitor"
+rustflags = [
+  "-C", "link-arg=-Tlinkall.x",
+  "-C", "link-arg=-nostartfiles",
+]
+"""
+
+
 def generate_build_rs():
     return """
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
-
 fn main() {
-    // Step 1: Trigger C++ compilation via ESPHome's build system
-    // For this migration, we assume the C++ side is built into libesphome.a
-
-    // Step 2: Compile bridge.cpp and shims
-    cc::Build::new()
-        .cpp(true)
-        .file("bridge.cpp")
-        .file("component_shims/i2c_shim.cpp")
-        .include("../src") // Path to esphome headers
-        .compile("bridge_shims");
-
-    // Step 3: Generate Rust FFI bindings from bridge.h
-    let bindings = bindgen::Builder::default()
-        .header("bridge.h")
-        .clang_arg("-I../src")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
-        .generate()
-        .expect("Unable to generate bindings");
-
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    bindings
-        .write_to_file(out_path.join("bindings.rs"))
-        .expect("Couldn't write bindings");
-
-    // Step 4: Link the C++ static library
-    // Path should be where libesphome.a is generated
     println!("cargo:rustc-link-search=native=../src/.pio/build/esp32dev");
     println!("cargo:rustc-link-lib=static=esphome");
     println!("cargo:rustc-link-lib=stdc++");
 
-    // ESP32-specific linking
     println!("cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:rustc-link-arg=-libesphome.a");
     println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
@@ -351,14 +369,16 @@ def generate_main_rs(config, legacy_info, native_info):
     code.append("#![no_std]")
     code.append("#![no_main]")
     code.append("")
+    code.append("use core::ffi::c_void;")
+    code.append("use static_cell::StaticCell;")
     code.append("use embassy_executor::Spawner;")
     code.append("use esp_backtrace as _;")
+    # Updated imports for esp-hal 1.0.0
     code.append("use esp_hal::{")
-    code.append("    clock::ClockControl,")
-    code.append("    peripherals::Peripherals,")
-    code.append("    prelude::*,")
-    code.append("    timer::TimerGroup,")
-    code.append("    IO,")
+    code.append("    timer::timg::TimerGroup,")
+    code.append("    interrupt::software::SoftwareInterruptControl,")
+    code.append("    gpio::{Input, InputConfig, Output, OutputConfig, Pull, Level},")
+    code.append("    main,")
     code.append("};")
     code.append("")
     code.append("mod bridge;")
@@ -368,17 +388,16 @@ def generate_main_rs(config, legacy_info, native_info):
     code.append("")
     code.append("use legacy_wrapper::LegacyWrapper;")
     code.append("")
-    code.append("#[main]")
+    code.append("#[esp_rtos::main]")
     code.append("async fn main(spawner: Spawner) {")
-    code.append("    let peripherals = Peripherals::take();")
-    code.append("    let system = peripherals.SYSTEM.split();")
-    code.append("    let clocks = ClockControl::max(system.clock_control).freeze();")
+    code.append("    let config = esp_hal::Config::default();")
+    code.append("    let peripherals = esp_hal::init(config);")
     code.append("")
-    code.append("    let timer_group0 = TimerGroup::new(peripherals.TIMG0, &clocks);")
-    # Embassy init for esp-hal
-    code.append("    esp_hal_embassy::init(&clocks, timer_group0);")
-    code.append("")
-    code.append("    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);")
+    code.append(
+        "    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);"
+    )
+    code.append("    let timg0 = TimerGroup::new(peripherals.TIMG0);")
+    code.append("    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);")
     code.append("")
 
     if has_i2c(config):
@@ -387,23 +406,27 @@ def generate_main_rs(config, legacy_info, native_info):
             i2c_configs = [i2c_configs]
 
         for i, i2c_conf in enumerate(i2c_configs):
-            # Default pins for ESP32 if not specified
-            sda = i2c_conf.get("sda", 21)
-            scl = i2c_conf.get("scl", 22)
+            sda_pin = i2c_conf.get("sda", 21)
+            scl_pin = i2c_conf.get("scl", 22)
             freq = str(i2c_conf.get("frequency", "100kHz")).lower().replace("khz", "")
 
             code.append(f"    // Initialize I2C bus {i}")
-            periph = f"I2C{i}" if i == 0 else f"I2C{i}"  # ESP32 has I2C0 and I2C1
-            code.append(f"    let i2c{i} = esp_hal::i2c::I2C::new(")
+            periph = f"I2C{i}"
+            # Updated I2C Initialization for v1.0.0
+            code.append(f"    let i2c{i} = esp_hal::i2c::master::I2c::new(")
             code.append(f"        peripherals.{periph},")
-            code.append(f"        io.pins.gpio{sda},")
-            code.append(f"        io.pins.gpio{scl},")
-            code.append(f"        {freq}.kHz(),")
-            code.append("        &clocks")
-            code.append("    );")
+            code.append("        esp_hal::i2c::master::Config::default()")
+            code.append(
+                f"            .with_frequency(esp_hal::time::Rate::from_khz({freq}))"
+            )
+            code.append("    )")
+            code.append(f"    .with_sda(peripherals.GPIO{sda_pin})")
+            code.append(f"    .with_scl(peripherals.GPIO{scl_pin})")
+            code.append("    .into_async();")
+
             if i == 0:
                 code.append(f"    let async_i2c = bridge::AsyncI2cBus::new(i2c{i});")
-                code.append("    bridge::I2C_BUS.set(async_i2c).unwrap();")
+                code.append("    unsafe { bridge::I2C_BUS = Some(async_i2c); }")
             code.append("")
 
     legacy_ptrs = []
@@ -420,33 +443,44 @@ def generate_main_rs(config, legacy_info, native_info):
         legacy_ptrs.append(f'("{comp_id}", {comp_id}_ptr)')
 
     if legacy_ptrs:
+        count = len(legacy_ptrs)
         code.append(
-            f"    unsafe {{ bridge::LEGACY_COMPONENTS = &[{', '.join(legacy_ptrs)}]; }}"
+            f"    static LEGACY_ARRAY: StaticCell<[(&str, *mut c_void); {count}]> = StaticCell::new();"
         )
+        code.append("    let legacy_array = LEGACY_ARRAY.init([")
+        code.extend([f"        {ptr}," for ptr in legacy_ptrs])
+        code.append("    ]);")
+        code.append("    unsafe { bridge::LEGACY_COMPONENTS = legacy_array; }")
 
-    # Instantiate native components
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
             pin = info["conf"].get("pin", 0)
+            code.append(f"    // Config for {comp_id}")
+            code.append("    let config = OutputConfig::default();")
+            code.append(
+                f"    let pin = Output::new(peripherals.GPIO{pin}, Level::Low, config);"
+            )
+
             code.append(
                 f"    let mut {comp_id} = crate::components::gpio_switch::GpioSwitch::new("
             )
-            code.append(
-                f'        "{comp_id}", io.pins.gpio{pin}.into(), esp_hal::gpio::Level::Low,'
-            )
+            code.append(f'        "{comp_id}", pin,')
             code.append(
                 f"        &bridge::{comp_id.upper()}_CMD, bridge::update_shadow_{comp_id}"
             )
             code.append("    );")
             code.append(f"    spawner.spawn(run_{comp_id}({comp_id})).unwrap();")
+
         elif info["platform"] == "gpio_binary_sensor":
             pin = info["conf"].get("pin", 0)
+            code.append(f"    // Config for {comp_id}")
+            code.append("    let config = InputConfig::default().with_pull(Pull::Up);")
+            code.append(f"    let pin = Input::new(peripherals.GPIO{pin}, config);")
+
             code.append(
                 f"    let mut {comp_id} = crate::components::gpio_binary_sensor::GpioBinarySensor::new("
             )
-            code.append(
-                f'        "{comp_id}", io.pins.gpio{pin}.into(), esp_hal::gpio::Pull::Up,'
-            )
+            code.append(f'        "{comp_id}", pin,')
             code.append(f"        bridge::update_shadow_{comp_id}")
             code.append("    );")
             code.append(f"    spawner.spawn(run_{comp_id}({comp_id})).unwrap();")
@@ -454,7 +488,7 @@ def generate_main_rs(config, legacy_info, native_info):
     code.append("}")
     code.append("")
 
-    # Native component tasks
+    # Tasks
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
             code.append("#[embassy_executor::task]")
@@ -470,7 +504,7 @@ def generate_main_rs(config, legacy_info, native_info):
             )
             code.append("    component.run().await;")
             code.append("}")
-    code.append("")
+
     code.append("#[embassy_executor::task]")
     code.append("async fn run_legacy_component(mut wrapper: LegacyWrapper) {")
     code.append("    wrapper.run().await;")
@@ -479,13 +513,230 @@ def generate_main_rs(config, legacy_info, native_info):
     return "\n".join(code)
 
 
+# --- INLINED COMPONENT CONTENT FOR ESP-HAL 1.0.0 COMPATIBILITY ---
+
+
+def generate_i2c_bridge_rs():
+    return """
+use core::slice;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::Mutex;
+use esp_hal::i2c::master::I2c;
+use esp_hal::Async;
+use embedded_hal_async::i2c::I2c as I2cTrait;
+
+pub struct AsyncI2cBus {
+    bus: Mutex<CriticalSectionRawMutex, I2c<'static, Async>>,
+}
+
+impl AsyncI2cBus {
+    pub fn new(i2c: I2c<'static, Async>) -> Self {
+        Self {
+            bus: Mutex::new(i2c),
+        }
+    }
+
+    pub async fn write(&self, addr: u8, bytes: &[u8]) -> Result<(), esp_hal::i2c::master::Error> {
+        let mut bus = self.bus.lock().await;
+        bus.write(addr, bytes)
+    }
+
+    pub async fn read(&self, addr: u8, buffer: &mut [u8]) -> Result<(), esp_hal::i2c::master::Error> {
+        let mut bus = self.bus.lock().await;
+        bus.read(addr, buffer)
+    }
+
+    pub async fn write_read(
+        &self,
+        addr: u8,
+        bytes: &[u8],
+        buffer: &mut [u8]
+    ) -> Result<(), esp_hal::i2c::master::Error> {
+        let mut bus = self.bus.lock().await;
+        bus.write_read(addr, bytes, buffer)
+    }
+}
+
+// Global I2C bus instance (unsafe static for FFI compatibility)
+pub static mut I2C_BUS: Option<AsyncI2cBus> = None;
+
+#[no_mangle]
+pub extern "C" fn rust_i2c_write(
+    addr: u8,
+    data: *const u8,
+    len: usize
+) -> i32 {
+    if data.is_null() || len == 0 { return -1; }
+    let bytes = unsafe { slice::from_raw_parts(data, len) };
+
+    // UNSAFE: Calling async from sync via blocking.
+    // Assumes single threaded or critical section handled by C++ caller or internal mutex logic.
+    embassy_futures::block_on(async {
+        let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
+        match bus.write(addr, bytes).await {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn rust_i2c_read(
+    addr: u8,
+    buffer: *mut u8,
+    len: usize
+) -> i32 {
+    if buffer.is_null() || len == 0 { return -1; }
+    let buffer_slice = unsafe { slice::from_raw_parts_mut(buffer, len) };
+
+    embassy_futures::block_on(async {
+        let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
+        match bus.read(addr, buffer_slice).await {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn rust_i2c_write_read(
+    addr: u8,
+    write_data: *const u8,
+    write_len: usize,
+    read_buffer: *mut u8,
+    read_len: usize,
+) -> i32 {
+    if write_data.is_null() || write_len == 0 || read_buffer.is_null() || read_len == 0 {
+        return -1;
+    }
+    let write_bytes = unsafe { slice::from_raw_parts(write_data, write_len) };
+    let read_slice = unsafe { slice::from_raw_parts_mut(read_buffer, read_len) };
+
+    embassy_futures::block_on(async {
+        let bus = unsafe { I2C_BUS.as_mut().expect("I2C not initialized") };
+        match bus.write_read(addr, write_bytes, read_slice).await {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+"""
+
+
+def generate_gpio_switch_rs():
+    return """
+use esp_hal::gpio::Output;
+use embassy_sync::channel::Channel;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub enum SwitchCommand {
+    TurnOn,
+    TurnOff,
+    Toggle,
+}
+
+pub struct GpioSwitch {
+    id: &'static str,
+    pin: Output<'static>,
+    command_channel: &'static Channel<CriticalSectionRawMutex, SwitchCommand, 8>,
+    on_update: fn(bool),
+}
+
+impl GpioSwitch {
+    pub fn new(
+        id: &'static str,
+        pin: Output<'static>,
+        command_channel: &'static Channel<CriticalSectionRawMutex, SwitchCommand, 8>,
+        on_update: fn(bool)
+    ) -> Self {
+        Self {
+            id,
+            pin,
+            command_channel,
+            on_update,
+        }
+    }
+
+    pub async fn run(&mut self) {
+        loop {
+            let cmd = self.command_channel.receive().await;
+            match cmd {
+                SwitchCommand::TurnOn => self.pin.set_high(),
+                SwitchCommand::TurnOff => self.pin.set_low(),
+                SwitchCommand::Toggle => self.pin.toggle(),
+            }
+            self.update_shadow();
+        }
+    }
+
+    fn update_shadow(&self) {
+        let is_on = self.pin.is_set_high();
+        (self.on_update)(is_on);
+    }
+}
+"""
+
+
+def generate_gpio_binary_sensor_rs():
+    return """
+use esp_hal::gpio::Input;
+use embassy_time::{Duration, Timer};
+
+pub struct GpioBinarySensor {
+    id: &'static str,
+    pin: Input<'static>,
+    last_state: bool,
+    on_update: fn(bool),
+}
+
+impl GpioBinarySensor {
+    pub fn new(id: &'static str, pin: Input<'static>, on_update: fn(bool)) -> Self {
+        Self {
+            id,
+            pin,
+            last_state: false,
+            on_update,
+        }
+    }
+
+    pub async fn run(&mut self) {
+        self.last_state = self.pin.is_high();
+        self.update_shadow(self.last_state);
+
+        loop {
+            let current_state = self.pin.is_high();
+            if current_state != self.last_state {
+                self.last_state = current_state;
+                self.update_shadow(current_state);
+            }
+            Timer::after(Duration::from_millis(50)).await;
+        }
+    }
+
+    fn update_shadow(&self, state: bool) {
+        (self.on_update)(state);
+    }
+}
+"""
+
+
 async def generate(config):
     _LOGGER.info("Generating Rust migration bridge...")
-    legacy, native = classify_components(config)
+
+    variant_info = get_variant_info(config)
+    target_triple = variant_info["target"]
+    rust_feature = variant_info["feature"]
 
     _LOGGER.info(
-        "Classified components: %d legacy, %d native", len(legacy), len(native)
+        "Detected variant: %s, feature: %s, target: %s",
+        config.get("esp32", {}).get(CONF_VARIANT, "unknown"),
+        rust_feature,
+        target_triple,
     )
+
+    legacy, native = classify_components(config)
 
     legacy_info = {}
     for name, component, conf in legacy:
@@ -499,8 +750,6 @@ async def generate(config):
                 "global_code": global_code,
             }
 
-    _LOGGER.info("Captured %d legacy components", len(legacy_info))
-
     native_info = {}
     for domain, component, conf in native:
         comp_id = conf.get(CONF_ID)
@@ -510,60 +759,64 @@ async def generate(config):
                 "conf": conf,
             }
 
-    # Use build path from CORE
     build_dir = Path(CORE.build_path) / "rust"
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    # bridge.cpp
+    src_dir = Path(CORE.build_path) / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generated files
     write_file_if_changed(
-        build_dir / "bridge.cpp", generate_bridge_cpp(legacy_info, native_info)
+        src_dir / "bridge.cpp", generate_bridge_cpp(legacy_info, native_info)
     )
-    # bridge.h (needed for bindgen)
     write_file_if_changed(
         build_dir / "bridge.h",
         '#include "esphome.h"\nextern "C" {\nvoid call_component_loop(void* ptr);\nvoid call_component_setup(void* ptr);\n}\n',
     )
-    # bridge.rs
     write_file_if_changed(
         build_dir / "bridge.rs", generate_bridge_rs(legacy_info, native_info)
     )
-    # main.rs
     write_file_if_changed(
         build_dir / "main.rs", generate_main_rs(config, legacy_info, native_info)
     )
-    # Cargo.toml
-    write_file_if_changed(build_dir / "Cargo.toml", generate_cargo_toml(CORE.name))
-    # build.rs
+    write_file_if_changed(
+        build_dir / "Cargo.toml", generate_cargo_toml(CORE.name, rust_feature)
+    )
     write_file_if_changed(build_dir / "build.rs", generate_build_rs())
 
-    # Copy shared files from embhome/ to the build directory
-    embhome_dir = Path("embhome")
-    for file in ["legacy_wrapper.rs"]:
-        shutil.copy(embhome_dir / file, build_dir / file)
+    cargo_config_dir = build_dir / ".cargo"
+    cargo_config_dir.mkdir(exist_ok=True)
+    write_file_if_changed(
+        cargo_config_dir / "config.toml", generate_cargo_config(target_triple)
+    )
 
-    # Copy shims
+    # Static files (copied or generated)
+    embhome_dir = Path("embhome")
+    if (embhome_dir / "legacy_wrapper.rs").exists():
+        shutil.copy(embhome_dir / "legacy_wrapper.rs", build_dir / "legacy_wrapper.rs")
+
     shims_dir = build_dir / "component_shims"
     shims_dir.mkdir(exist_ok=True)
-    for file in os.listdir(embhome_dir / "component_shims"):
-        shutil.copy(embhome_dir / "component_shims" / file, shims_dir / file)
+    # Generate corrected i2c bridge
+    write_file_if_changed(shims_dir / "i2c_bridge.rs", generate_i2c_bridge_rs())
+    write_file_if_changed(shims_dir / "mod.rs", "pub mod i2c_bridge;\n")
 
-    # Copy native components
+    # Copy C++ i2c shim to src/
+    if (embhome_dir / "component_shims" / "i2c_shim.cpp").exists():
+        shutil.copy(
+            embhome_dir / "component_shims" / "i2c_shim.cpp", src_dir / "i2c_shim.cpp"
+        )
+
     comp_dir = build_dir / "components"
     comp_dir.mkdir(exist_ok=True)
-    for file in os.listdir(embhome_dir / "components"):
-        shutil.copy(embhome_dir / "components" / file, comp_dir / file)
-
-    # Create components/mod.rs
-    with open(comp_dir / "mod.rs", "w") as f:
-        for file in os.listdir(comp_dir):
-            if file.endswith(".rs") and file != "mod.rs":
-                f.write(f"pub mod {file[:-3]};\n")
-
-    # Create component_shims/mod.rs
-    with open(shims_dir / "mod.rs", "w") as f:
-        for file in os.listdir(shims_dir):
-            if file.endswith(".rs") and file != "mod.rs":
-                f.write(f"pub mod {file[:-3]};\n")
+    # Generate corrected components
+    write_file_if_changed(comp_dir / "gpio_switch.rs", generate_gpio_switch_rs())
+    write_file_if_changed(
+        comp_dir / "gpio_binary_sensor.rs", generate_gpio_binary_sensor_rs()
+    )
+    write_file_if_changed(
+        comp_dir / "mod.rs", "pub mod gpio_switch;\npub mod gpio_binary_sensor;\n"
+    )
 
     _LOGGER.info("Rust migration project generated in %s", build_dir)
 
@@ -572,14 +825,8 @@ def compile(config):
     build_dir = Path(CORE.build_path) / "rust"
     _LOGGER.info("Compiling Rust migration project in %s...", build_dir)
 
-    # Run cargo build
-    # In a real environment, we'd need to make sure the rust toolchain is set up for xtensa
-    import subprocess
-
     try:
-        rc = subprocess.call(
-            ["cargo", "build", "--release", "--features", "esp32c3"], cwd=build_dir
-        )
+        rc = subprocess.call(["cargo", "build", "--release"], cwd=build_dir)
         if rc != 0:
             _LOGGER.error("Cargo build failed with return code %d", rc)
             return rc
