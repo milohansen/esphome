@@ -219,21 +219,70 @@ name = "{name}"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "{name}"
+path = "main.rs"
+
+# TODO: set target-features for the actual board being used
+
 [dependencies]
-embassy-executor = {{ version = "0.9.1", features = ["executor-thread", "task-arena-size-12288"] }}
+embassy-executor = {{ version = "0.9.1", features = ["executor-thread"] }}
 embassy-time = {{ version = "0.5.0", features = ["generic-queue-8"] }}
 embassy-sync = "0.7.2"
 embassy-futures = "0.1.1"
-embedded-hal = "1.0"
-embedded-hal-async = "1.0"
-# TODO: set target-features for the actual board being used
-esp-hal = {{ version = "1.0.0", features = ["esp32"] }}
-esp-hal-embassy = {{ version = "0.9.1", features = ["esp32", "executors"] }}
-esp-backtrace = {{ version = "0.18.1", features = ["esp32", "panic-handler", "println"] }}
-esp-println = {{ version = "0.16.1", features = ["esp32", "log"] }}
+esp-backtrace = {{ version = "0.18.1", features = ["panic-handler", "println"] }}
+esp-bootloader-esp-idf = {{ version = "0.4.0", features = ["log-04"] }}
+esp-hal = {{ version = "1.0.0", features = ["unstable"] }}
+esp-rtos = {{ version = "0.2.0", features = ["embassy", "log-04"] }}
+esp-println = {{ version = "0.16.1", features = ["log-04"] }}
+
 log = "0.4"
 static_cell = "2.1"
 critical-section = "1.2"
+
+[features]
+esp32 = [
+    "esp-backtrace/esp32",
+    "esp-bootloader-esp-idf/esp32",
+    "esp-rtos/esp32",
+    "esp-hal/esp32",
+]
+esp32c2 = [
+    "esp-backtrace/esp32c2",
+    "esp-bootloader-esp-idf/esp32c2",
+    "esp-rtos/esp32c2",
+    "esp-hal/esp32c2",
+]
+esp32c3 = [
+    "esp-backtrace/esp32c3",
+    "esp-bootloader-esp-idf/esp32c3",
+    "esp-rtos/esp32c3",
+    "esp-hal/esp32c3",
+]
+esp32c6 = [
+    "esp-backtrace/esp32c6",
+    "esp-bootloader-esp-idf/esp32c6",
+    "esp-rtos/esp32c6",
+    "esp-hal/esp32c6",
+]
+esp32h2 = [
+    "esp-backtrace/esp32h2",
+    "esp-bootloader-esp-idf/esp32h2",
+    "esp-rtos/esp32h2",
+    "esp-hal/esp32h2",
+]
+esp32s2 = [
+    "esp-backtrace/esp32s2",
+    "esp-bootloader-esp-idf/esp32s2",
+    "esp-rtos/esp32s2",
+    "esp-hal/esp32s2",
+]
+esp32s3 = [
+    "esp-backtrace/esp32s3",
+    "esp-bootloader-esp-idf/esp32s3",
+    "esp-rtos/esp32s3",
+    "esp-hal/esp32s3",
+]
 
 [build-dependencies]
 bindgen = "0.72"
@@ -528,7 +577,9 @@ def compile(config):
     import subprocess
 
     try:
-        rc = subprocess.call(["cargo", "build", "--release"], cwd=build_dir)
+        rc = subprocess.call(
+            ["cargo", "build", "--release", "--features", "esp32c3"], cwd=build_dir
+        )
         if rc != 0:
             _LOGGER.error("Cargo build failed with return code %d", rc)
             return rc
