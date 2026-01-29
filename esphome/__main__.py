@@ -831,18 +831,23 @@ def command_vscode(args: ArgsProtocol) -> int | None:
 def command_compile(args: ArgsProtocol, config: ConfigType) -> int | None:
     native_idf = getattr(args, "native_idf", False)
     rust = getattr(args, "rust", False)
-    if rust:
-        from esphome import rust_generator
-        CORE.add_job(rust_generator.generate, config)
     exit_code = write_cpp(config, native_idf=native_idf)
     if exit_code != 0:
         return exit_code
+    if rust:
+        from esphome import rust_generator
+        from esphome.coroutine import FakeEventLoop
+
+        loop = FakeEventLoop()
+        loop.add_job(rust_generator.generate, config)
+        loop.flush_tasks()
+        if args.only_generate:
+            _LOGGER.info("Successfully generated source code.")
+            return 0
+        return rust_generator.compile(config)
     if args.only_generate:
         _LOGGER.info("Successfully generated source code.")
         return 0
-    if rust:
-        from esphome import rust_generator
-        return rust_generator.compile(config)
     exit_code = compile_program(args, config)
     if exit_code != 0:
         return exit_code
@@ -894,10 +899,19 @@ def command_logs(args: ArgsProtocol, config: ConfigType) -> int | None:
 def command_run(args: ArgsProtocol, config: ConfigType) -> int | None:
     native_idf = getattr(args, "native_idf", False)
     rust = getattr(args, "rust", False)
+    exit_code = write_cpp(config, native_idf=native_idf)
+    if exit_code != 0:
+        return exit_code
     if rust:
         from esphome import rust_generator
-        CORE.add_job(rust_generator.generate, config)
-    exit_code = write_cpp(config, native_idf=native_idf)
+        from esphome.coroutine import FakeEventLoop
+
+        loop = FakeEventLoop()
+        loop.add_job(rust_generator.generate, config)
+        loop.flush_tasks()
+        rust_exit_code = rust_generator.compile(config)
+        if rust_exit_code != 0:
+            return rust_exit_code
     if exit_code != 0:
         return exit_code
     exit_code = compile_program(args, config)
