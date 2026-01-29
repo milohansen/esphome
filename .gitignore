@@ -62,6 +62,7 @@ htmlcov/
 .cache
 .esphome
 nosetests.xml
+embhome/target/
 coverage.xml
 cov.xml
 *.cover
@@ -152,4 +153,4 @@ api-docs/
 
 # Added by cargo
 
-embhome/target
+/target

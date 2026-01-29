@@ -4,8 +4,32 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
+def generate_bridge_h():
+    code = [
+        '#pragma once',
+        '',
+        '#include "../esphome/core/component.h"',
+        '#include "../esphome/core/preferences.h"',
+        '#include "../esphome/components/interval/interval.h"',
+        '#include "../esphome/components/dht/dht.h"',
+        '',
+        'extern "C" {'
+    ]
+
+    for component_id in CORE.rust_referenced_by_cpp:
+        code.append(f"  void* create_{component_id}_proxy();")
+
+    for var in CORE.registered_components:
+        component_id = str(var.base)
+        if component_id not in CORE.rust_component_ids:
+            code.append(f"  void* create_{component_id}();")
+
+    code.append('  void call_cpp_loop(void* ptr);')
+    code.append('}')
+    return "\n".join(code)
+
 def generate_bridge_cpp():
-    code = ['#include "esphome.h"', '']
+    code = ['#include "bridge.h"', '']
 
     # Generate Proxies for Rust components referenced by C++
     for component_id in CORE.rust_referenced_by_cpp:
@@ -125,5 +149,6 @@ def write_rust_project():
 
     write_file_if_changed(base_path / "bridge.rs", generate_bridge_rs())
     write_file_if_changed(base_path / "main.rs", generate_main_rs())
-    # bridge.cpp goes into the C++ side of the build
+    # bridge.h and bridge.cpp go into the embhome directory
+    write_file_if_changed(root_path / "embhome" / "bridge.h", generate_bridge_h())
     write_file_if_changed(root_path / "embhome" / "bridge.cpp", generate_bridge_cpp())

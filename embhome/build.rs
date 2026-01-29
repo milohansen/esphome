@@ -24,7 +24,7 @@ fn main() {
 
     // Bindgen to generate Rust FFI for factory functions
     let bindings = bindgen::Builder::default()
-        .header("bridge.cpp") // We can use the .cpp as header for bindgen if it has extern "C"
+        .header("bridge.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings");

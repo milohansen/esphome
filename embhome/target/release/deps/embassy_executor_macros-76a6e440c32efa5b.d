@@ -1,0 +1,10 @@
+/app/embhome/target/release/deps/embassy_executor_macros-76a6e440c32efa5b.d: /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/lib.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/mod.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/main.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/task.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/util.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/../README.md
+
+/app/embhome/target/release/deps/libembassy_executor_macros-76a6e440c32efa5b.so: /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/lib.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/mod.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/main.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/task.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/util.rs /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/../README.md
+
+/home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/lib.rs:
+/home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/mod.rs:
+/home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/main.rs:
+/home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/macros/task.rs:
+/home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/util.rs:
+/home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/embassy-executor-macros-0.7.0/src/../README.md:

@@ -24,6 +24,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
+name = "basic-toml"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba62675e8242a4c4e806d12f11d136e626e6c8361d6b829310732241652a178a"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -295,7 +304,7 @@ dependencies = [
  "embedded-io-async",
  "futures-sink",
  "futures-util",
- "heapless 0.8.0",
+ "heapless",
 ]
 
 [[package]]
@@ -309,7 +318,7 @@ dependencies = [
  "embedded-io-async",
  "futures-core",
  "futures-sink",
- "heapless 0.8.0",
+ "heapless",
 ]
 
 [[package]]
@@ -345,7 +354,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80e2ee86063bd028a420a5fb5898c18c87a8898026da1d4c852af2c443d0a454"
 dependencies = [
  "embassy-executor-timer-queue",
- "heapless 0.8.0",
+ "heapless",
 ]
 
 [[package]]
@@ -451,18 +460,27 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "esp-backtrace"
-version = "0.18.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3318413fb566c7227387f67736cf70cd74d80a11f2bb31c7b95a9eb48d079669"
+checksum = "5f270a29a3c4e492399b13e157b10151a7616cba69c4d554076ea93ed1bd2916"
 dependencies = [
  "cfg-if",
- "document-features",
- "esp-config",
- "esp-metadata-generated",
+ "esp-config 0.5.0",
  "esp-println",
- "heapless 0.9.2",
- "riscv",
- "xtensa-lx",
+ "heapless",
+]
+
+[[package]]
+name = "esp-config"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abd4a8db4b72794637a25944bc8d361c3cc271d4f03987ce8741312b6b61529c"
+dependencies = [
+ "document-features",
+ "esp-metadata-generated 0.1.0",
+ "evalexpr",
+ "serde",
+ "serde_yaml",
 ]
 
 [[package]]
@@ -472,7 +490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "102871054f8dd98202177b9890cb4b71d0c6fe1f1413b7a379a8e0841fc2473c"
 dependencies = [
  "document-features",
- "esp-metadata-generated",
+ "esp-metadata-generated 0.3.0",
  "serde",
  "serde_yaml",
  "somni-expr",
@@ -496,9 +514,9 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "enumset",
- "esp-config",
+ "esp-config 0.6.1",
  "esp-hal-procmacros",
- "esp-metadata-generated",
+ "esp-metadata-generated 0.3.0",
  "esp-riscv-rt",
  "esp-rom-sys",
  "esp-sync",
@@ -534,6 +552,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-metadata"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6fbc1d166be84c0750f121e95c8989ddebd7e7bdd86af3594a6cfb34f039650"
+dependencies = [
+ "anyhow",
+ "basic-toml",
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "strum",
+]
+
+[[package]]
+name = "esp-metadata-generated"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "189d36b8c8a752bdebec67fd02a15ebb1432feea345553749bca7ce2393cc795"
+dependencies = [
+ "esp-metadata",
+]
+
+[[package]]
 name = "esp-metadata-generated"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -541,13 +583,13 @@ checksum = "9a93e39c8ad8d390d248dc7b9f4b59a873f313bf535218b8e2351356972399e3"
 
 [[package]]
 name = "esp-println"
-version = "0.16.1"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a30e6c9fbcc01c348d46706fef8131c7775ab84c254a3cd65d0cd3f6414d592"
+checksum = "3e7e3ab41e96093d7fd307e93bfc88bd646a8ff23036ebf809e116b18869f719"
 dependencies = [
+ "critical-section",
  "document-features",
- "esp-metadata-generated",
- "esp-sync",
+ "esp-metadata-generated 0.1.0",
  "log",
  "portable-atomic",
 ]
@@ -571,7 +613,7 @@ checksum = "cd66cccc6dd2d13e9f33668a57717ab14a6d217180ec112e6be533de93e7ecbf"
 dependencies = [
  "cfg-if",
  "document-features",
- "esp-metadata-generated",
+ "esp-metadata-generated 0.3.0",
 ]
 
 [[package]]
@@ -584,7 +626,7 @@ dependencies = [
  "document-features",
  "embassy-sync 0.6.2",
  "embassy-sync 0.7.2",
- "esp-metadata-generated",
+ "esp-metadata-generated 0.3.0",
  "riscv",
  "xtensa-lx",
 ]
@@ -658,6 +700,12 @@ dependencies = [
  "critical-section",
  "vcell",
 ]
+
+[[package]]
+name = "evalexpr"
+version = "12.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae893d2d5e908b78f151ed89de3bfc272cdf6d368c7ed866942f98e24dea208a"
 
 [[package]]
 name = "filetime"
@@ -764,16 +812,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "heapless"
-version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af2455f757db2b292a9b1768c4b70186d443bcb3b316252d6b540aec1cd89ed"
-dependencies = [
- "hash32",
- "stable_deref_trait",
-]
-
-[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -793,6 +831,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
