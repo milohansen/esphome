@@ -1121,7 +1121,7 @@ generated-project/
 [package]
 name = "my-esphome-device"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 # Core
@@ -1394,7 +1394,7 @@ esphome-{component}/
 [package]
 name = "esphome-{component}"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["ESPHome-RS Contributors"]
 license = "MIT OR Apache-2.0"
 description = "{Component} support for ESPHome-RS"

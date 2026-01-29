@@ -49,7 +49,7 @@ class RustGenerator:
         self.component_spawns.append(code)
 
     def generate_cargo_toml(self) -> str:
-        toml = '[package]\nname = "esphome_app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n'
+        toml = '[package]\nname = "esphome_app"\nversion = "0.1.0"\nedition = "2024"\n\n[dependencies]\n'
         for dep in self.dependencies:
             toml += f'{dep.name} = {{ version = "{dep.version}"'
             if dep.features:
