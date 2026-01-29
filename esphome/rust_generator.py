@@ -787,14 +787,32 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         return False
 
     # 3. Create libesphome.a from .o files (Application Code)
+    # CRITICAL FIX: Only archive object files from 'src/' to avoid duplicate definitions of framework symbols
     obj_files = []
-    for root, dirs, files in os.walk(env_dir):
-        obj_files.extend(
-            [os.path.join(root, file) for file in files if file.endswith(".o")]
-        )
+
+    # Walk only the 'src' subdirectory of the build environment
+    src_build_dir = env_dir / "src"
+    if src_build_dir.exists():
+        for root, dirs, files in os.walk(src_build_dir):
+            obj_files.extend(
+                [os.path.join(root, file) for file in files if file.endswith(".o")]
+            )
 
     if not obj_files:
-        _LOGGER.error("No object files found in %s", env_dir)
+        _LOGGER.error("No object files found in %s", src_build_dir)
+        # Fallback: check root env dir in case of flat build structure, but filter aggressively
+        # (This is risky but handles edge cases)
+        for root, dirs, files in os.walk(env_dir):
+            obj_files.extend(
+                [
+                    os.path.join(root, file)
+                    for file in files
+                    if file.endswith(".o") and "framework-espidf" not in root
+                ]
+            )
+
+    if not obj_files:
+        _LOGGER.error("Fatal: No application object files found to archive.")
         return False
 
     ar_tool = "ar"
@@ -804,7 +822,7 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
     libesphome_path = libs_dir / "libesphome.a"
     try:
         subprocess.check_call([str(ar_tool), "rcs", str(libesphome_path)] + obj_files)
-        _LOGGER.info("Created %s", libesphome_path)
+        _LOGGER.info("Created %s with %d objects", libesphome_path, len(obj_files))
     except Exception as e:
         _LOGGER.error("Failed to archive libesphome.a: %s", e)
         return False
@@ -832,12 +850,13 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
 
         found_blobs = 0
         for root, dirs, files in os.walk(framework_dir):
-            if Path(root).name == blob_folder:
+            # Check if current directory matches blob folder OR is a generic lib folder
+            if Path(root).name == blob_folder or Path(root).name == "lib":
                 for file in files:
                     if file.endswith(".a"):
                         src = Path(root) / file
                         dst = libs_dir / file
-                        # Don't overwrite if PIO already built a version (unlikely for blobs)
+                        # Only copy if not already present (PIO built libs take precedence)
                         if not dst.exists():
                             shutil.copy(src, dst)
                             found_blobs += 1
@@ -971,16 +990,19 @@ def compile(config):
     try:
         with open(log_file, "w") as f:
             _LOGGER.info("Writing Cargo output to %s", log_file)
-            # Redirect stdout and stderr to the log file
             rc = subprocess.call(
                 ["cargo", "build", "--release"],
                 cwd=build_dir,
                 stdout=f,
                 stderr=subprocess.STDOUT,
             )
-        # rc = subprocess.call(["cargo", "build", "--release"], cwd=build_dir)
+
         if rc != 0:
-            _LOGGER.error("Cargo build failed with return code %d", rc)
+            _LOGGER.error(
+                "Cargo build failed with return code %d. See %s for details.",
+                rc,
+                log_file,
+            )
             return rc
     except Exception as e:
         _LOGGER.error("Failed to run cargo: %s", e)
