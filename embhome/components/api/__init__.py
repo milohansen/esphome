@@ -1,50 +1,33 @@
 """
-API component code generation for Rust.
+Component: api
+Status: NOT IMPLEMENTED
 
-This module provides code generation hooks for the native API component,
-allowing it to inject dependencies and task spawning code into generated projects.
+Structure:
+- Platform types: component
+- Has platform dirs: False
+- Platform subdirs: none
+
+Dependencies: network
+Auto-load: none
+Codeowners: @esphome/core
+Core-owned: YES
 """
 
-from pathlib import Path
-import sys
+import esphome.config_validation as cv
 
-# Add embhome to path so we can import rust_component
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from embhome.core.rust_component import (  # noqa: E402
-    RustComponent,
-    RustComponentConfig,
-    register_rust_component,
+def validate_component_not_implemented(config):
+    raise cv.Invalid(
+        "Component 'api' is not yet implemented in embhome. This is a stub placeholder."
+    )
+
+
+# Stub schema that raises error
+CONFIG_SCHEMA = cv.All(
+    cv.Schema({}, extra=cv.ALLOW_EXTRA), validate_component_not_implemented
 )
 
 
-class ApiComponent(RustComponent):
-    """API component code generation"""
-
-    def __init__(self):
-        super().__init__("api")
-
-    def get_dependencies(self, gen, config: RustComponentConfig) -> list:
-        """Add API-specific dependencies"""
-        from esphome.rust_generator import RustDependency
-
-        rust_root = config.rust_root
-
-        return [
-            RustDependency(
-                "esphome-api", "0.1.0", path=str(rust_root / "components/api")
-            ),
-            RustDependency(
-                "prost", "0.14.3", default_features=False, features=["alloc"]
-            ),
-        ]
-
-    def add_spawn_code(self, gen, config: RustComponentConfig) -> None:
-        """Spawn API server task"""
-        gen.add_component_spawn(
-            "spawner.spawn(esphome_api::api_server(stack)).unwrap();"
-        )
-
-
-# Register the component
-register_rust_component("api", ApiComponent())
+async def to_code(config):
+    """This should never be called due to validation error."""
+    pass
