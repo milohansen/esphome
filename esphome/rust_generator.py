@@ -209,6 +209,7 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("    component->loop();")
     code.append("}")
     code.append("")
+
     code.append("void call_component_setup(void* component_ptr) {")
     code.append("    auto* component = static_cast<Component*>(component_ptr);")
     code.append("    component->setup();")
@@ -352,6 +353,12 @@ def generate_cargo_config(
         "-C",
         "link-arg=-L.",
     ]
+
+    # Add relaxation for RISC-V to fix relocation truncations
+    if "riscv" in target_triple:
+        flags.append("-C")
+        # UPDATED: Use -mrelax as suggested by the compiler driver (instead of --relax)
+        flags.append("link-arg=-mrelax")
 
     # Selectively add PlatformIO Linker Scripts
     if ld_scripts:
@@ -993,9 +1000,11 @@ def compile(config):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
 
-    # RESTORED AND FILTERED: Find PlatformIO linker scripts
-    # We must include *.ld (like sections.ld, peripherals.ld) but exclude memory.ld
-    # to avoid conflict with Rust's linkall.x
+    # RESTORED AND MODIFIED: Find PlatformIO linker scripts recursively
+    # We must include *.ld (especially peripherals.ld) AND memory.ld.
+    # While memory.ld conflicts with Rust's linkall.x, excluding it causes
+    # undefined memory regions which breaks relocation for binary blobs.
+    # The flag -Wl,--allow-multiple-definition handles the conflict.
     esphome_build_dir = build_dir.parent
     pio_build_dir = esphome_build_dir / ".pio" / "build"
     env_dir = None
@@ -1007,13 +1016,10 @@ def compile(config):
 
     ld_scripts = []
     if env_dir:
-        for file in env_dir.iterdir():
-            if file.suffix == ".ld":
-                if "memory.ld" in file.name:
-                    _LOGGER.info("Skipping conflicting linker script: %s", file.name)
-                else:
-                    _LOGGER.info("Adding PlatformIO linker script: %s", file.name)
-                    ld_scripts.append(file.absolute())
+        # Recursive search to find scripts like peripherals.ld that might be nested
+        for file in env_dir.rglob("*.ld"):
+            _LOGGER.info("Adding PlatformIO linker script: %s", file.name)
+            ld_scripts.append(file.absolute())
 
     cargo_config_dir = build_dir / ".cargo"
     write_file_if_changed(
