@@ -4,6 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-esphome-core = { path = "../../core" }
-log = "0.4"
-heapless = "0.8"
+esphome-core = { workspace = true }
+log = { workspace = true }
+heapless = { workspace = true }
+
+[features]
+# Forward chip features through the dependency chain
+esp32 = ["esphome-core/esp32"]
+esp32c3 = ["esphome-core/esp32c3"]
+esp32s2 = ["esphome-core/esp32s2"]
+esp32s3 = ["esphome-core/esp32s3"]
+esp32c2 = ["esphome-core/esp32c2"]
+esp32c5 = ["esphome-core/esp32c5"]
+esp32c6 = ["esphome-core/esp32c6"]
+esp32h2 = ["esphome-core/esp32h2"]
+esp32p4 = ["esphome-core/esp32p4"]
+
+default = []

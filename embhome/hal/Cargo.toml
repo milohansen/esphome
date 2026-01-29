@@ -4,6 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-esphome-core = { path = "../core" }
-esp-hal = "0.22.0"
-log = "0.4"
+esphome-core = { workspace = true }
+esp-hal = { workspace = true }
+log = { workspace = true }
+
+[features]
+# Forward chip features to esp-hal
+# When esphome-hal is built with --features esp32c3, this enables esp-hal/esp32c3
+esp32 = ["esphome-core/esp32", "esp-hal/esp32"]
+esp32c3 = ["esphome-core/esp32c3", "esp-hal/esp32c3"]
+esp32s2 = ["esphome-core/esp32s2", "esp-hal/esp32s2"]
+esp32s3 = ["esphome-core/esp32s3", "esp-hal/esp32s3"]
+esp32c2 = ["esphome-core/esp32c2", "esp-hal/esp32c2"]
+esp32c5 = ["esphome-core/esp32c5", "esp-hal/esp32c5"]
+esp32c6 = ["esphome-core/esp32c6", "esp-hal/esp32c6"]
+esp32h2 = ["esphome-core/esp32h2", "esp-hal/esp32h2"]
+esp32p4 = ["esphome-core/esp32p4", "esp-hal/esp32p4"]
+
+default = []

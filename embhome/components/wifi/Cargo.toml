@@ -4,23 +4,31 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-esphome-core = { path = "../../core" }
-esphome-config = { path = "../../config" }
-esp-wifi = { version = "0.11.0", default-features = false }
-embassy-net = { version = "0.6.0", features = ["tcp", "udp", "dhcpv4", "medium-ethernet", "proto-ipv4", "dns"] }
-embassy-executor = { version = "0.9.1", features = ["executor-thread"] }
-embassy-time = { version = "0.5.0", features = ["generic-queue-8"] }
-esp-hal = { version = "1.0.0", features = ["unstable"] }
-log = "0.4"
-smoltcp = { version = "0.12.0", default-features = false, features = ["medium-ethernet", "proto-ipv4", "socket-icmp", "socket-udp", "socket-tcp"] }
-esp-alloc = "0.5.0"
-embassy-sync = "0.7.2"
-embassy-futures = "0.1.1"
-embedded-hal = "1.0"
-embedded-hal-async = "1.0"
+esphome-core = { workspace = true }
+esphome-config = { workspace = true }
+esp-wifi = { workspace = true }
+esp-hal = { workspace = true }
+esp-alloc = { workspace = true }
+embassy-net = { workspace = true }
+embassy-executor = { workspace = true }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-futures = { workspace = true }
+log = { workspace = true }
+smoltcp = { workspace = true }
+embedded-hal = { workspace = true }
+embedded-hal-async = { workspace = true }
 
 [features]
-esp32 = ["esp-wifi/esp32", "esp-hal/esp32"]
-esp32c3 = ["esp-wifi/esp32c3", "esp-hal/esp32c3"]
-esp32s2 = ["esp-wifi/esp32s2", "esp-hal/esp32s2"]
-esp32s3 = ["esp-wifi/esp32s3", "esp-hal/esp32s3"]
+# Forward chip features to esp-wifi and esp-hal
+# This is critical because WiFi drivers are chip-specific
+esp32 = ["esphome-core/esp32", "esp-wifi/esp32", "esp-hal/esp32"]
+esp32c3 = ["esphome-core/esp32c3", "esp-wifi/esp32c3", "esp-hal/esp32c3"]
+esp32s2 = ["esphome-core/esp32s2", "esp-wifi/esp32s2", "esp-hal/esp32s2"]
+esp32s3 = ["esphome-core/esp32s3", "esp-wifi/esp32s3", "esp-hal/esp32s3"]
+esp32c2 = ["esphome-core/esp32c2", "esp-wifi/esp32c2", "esp-hal/esp32c2"]
+esp32c6 = ["esphome-core/esp32c6", "esp-wifi/esp32c6", "esp-hal/esp32c6"]
+esp32h2 = ["esphome-core/esp32h2", "esp-wifi/esp32h2", "esp-hal/esp32h2"]
+# Note: esp32c5 and esp32p4 may not have WiFi support
+
+default = []

@@ -4,10 +4,31 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embassy-sync = "0.7.2"
-embassy-executor = { version = "0.9.1", features = ["executor-thread"] }
-embassy-time = { version = "0.5.0", features = ["generic-queue-8"] }
-async-trait = "0.1"
-log = "0.4"
-heapless = "0.8"
-serde = { version = "1.0", default-features = false }
+embassy-sync = { workspace = true }
+embassy-executor = { workspace = true }
+embassy-time = { workspace = true }
+async-trait = { workspace = true }
+log = { workspace = true }
+heapless = { workspace = true }
+serde = { workspace = true }
+
+# Core doesn't directly depend on esp-hal, but it defines chip features
+# that get propagated to components that do depend on esp-hal
+# This ensures all crates in the workspace use consistent chip selection
+
+[features]
+# Chip features - exactly one must be enabled at build time
+# These features are forwarded from the root/generated project to ensure
+# all dependencies use the same chip configuration
+esp32 = []
+esp32c3 = []
+esp32s2 = []
+esp32s3 = []
+esp32c2 = []
+esp32c5 = []
+esp32c6 = []
+esp32h2 = []
+esp32p4 = []
+
+# Default feature for development/testing (should be overridden in real builds)
+default = []

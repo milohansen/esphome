@@ -1,0 +1,55 @@
+# This is an example of what the Python code generator would produce
+# for a device named "living-room-sensor" targeting ESP32-C3
+
+[package]
+name = "living-room-sensor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Core components with chip feature
+esphome-core = { path = "../core", features = ["esp32c3"] }
+esphome-hal = { path = "../hal", features = ["esp32c3"] }
+
+# WiFi and networking
+esphome-wifi = { path = "../components/wifi", features = ["esp32c3"] }
+esphome-api = { path = "../components/api", features = ["esp32c3"] }
+
+# Components used in this device
+esphome-gpio = { path = "../components/gpio", features = ["esp32c3"] }
+esphome-sensor = { path = "../components/sensor", features = ["esp32c3"] }
+esphome-uptime = { path = "../components/uptime", features = ["esp32c3"] }
+
+# Platform dependencies (same versions as workspace)
+esp-hal = { version = "1.0.0", features = ["unstable", "esp32c3"] }
+esp-backtrace = { version = "0.11", features = ["panic-handler", "exception-handler"] }
+esp-println = "0.9"
+
+# Embassy runtime
+embassy-executor = { version = "0.9.1", features = ["executor-thread"] }
+embassy-time = { version = "0.5.0", features = ["generic-queue-8"] }
+embassy-sync = "0.7.2"
+
+[features]
+# The esp32c3 feature enables all chip-specific features in dependencies
+esp32c3 = [
+    "esphome-core/esp32c3",
+    "esphome-hal/esp32c3",
+    "esphome-wifi/esp32c3",
+    "esphome-api/esp32c3",
+    "esphome-gpio/esp32c3",
+    "esphome-sensor/esp32c3",
+    "esphome-uptime/esp32c3",
+]
+
+# Make esp32c3 the default feature so it's always enabled
+default = ["esp32c3"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1
