@@ -1,0 +1,22 @@
+[package]
+name = "esphome-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+esphome-core = { path = "../esphome-core" }
+esphome-config = { path = "../esphome-config" }
+esphome-wifi = { path = "../esphome-wifi" }
+embassy-net = { version = "0.6.0", features = ["tcp"] }
+embassy-executor = "0.6.0"
+embassy-time = "0.3.2"
+embassy-sync = "0.6.0"
+log = "0.4"
+prost = { version = "0.13.0", default-features = false, features = ["alloc"] }
+nanopb = { version = "0.1.0", optional = true } # Not strictly needed if using prost
+
+[build-dependencies]
+prost-build = "0.13.0"
+
+[features]
+default = []

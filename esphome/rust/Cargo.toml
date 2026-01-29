@@ -6,6 +6,7 @@ members = [
     "esphome-config",
     "esphome-gpio",
     "esphome-wifi",
+    "esphome-api",
 ]
 
 [profile.release]

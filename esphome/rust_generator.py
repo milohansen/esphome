@@ -8,6 +8,7 @@ class RustDependency:
     features: list[str] = field(default_factory=list)
     git: str | None = None
     path: str | None = None
+    default_features: bool = True
 
 
 @dataclass
@@ -54,6 +55,8 @@ class RustGenerator:
             if dep.features:
                 feats = ", ".join([f'"{f}"' for f in dep.features])
                 toml += f", features = [{feats}]"
+            if not dep.default_features:
+                toml += ", default-features = false"
             if dep.path:
                 toml += f', path = "{dep.path}"'
             elif dep.git:

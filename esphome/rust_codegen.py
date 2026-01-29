@@ -121,6 +121,7 @@ def generate_rust_project(config, output_dir: Path):
     )
 
     # WiFi Setup
+    # stack_var = "stack"
     if "wifi" in config:
         wifi_conf = config["wifi"]
         gen.add_dependency(
@@ -149,22 +150,26 @@ def generate_rust_project(config, output_dir: Path):
         gen.add_main_code(
             "let timer_group1 = TimerGroup::new(peripherals.TIMG1, &clocks);"
         )
-        gen.add_main_code("""
+        gen.add_main_code(
+            """
     let init = esp_wifi::init(
         timer_group1.timer0,
         esp_hal::rng::Rng::new(peripherals.RNG),
         peripherals.RADIO_CLK,
         &clocks,
     ).unwrap();
-        """)
+        """
+        )
 
-        gen.add_main_code("""
+        gen.add_main_code(
+            """
     let (wifi_interface, controller) = esp_wifi::wifi::new_with_mode(
         &init,
         peripherals.WIFI,
         esp_wifi::wifi::WifiStaDevice,
     ).unwrap();
-        """)
+        """
+        )
 
         # Static allocations
         gen.add_main_code(
@@ -174,7 +179,8 @@ def generate_rust_project(config, output_dir: Path):
             "let wifi_resources = WIFI_RESOURCES.init(esphome_wifi::WifiResources::new());"
         )
 
-        gen.add_main_code("""
+        gen.add_main_code(
+            """
     let config = embassy_net::Config::dhcpv4(Default::default());
     let seed = 1234;
 
@@ -184,7 +190,8 @@ def generate_rust_project(config, output_dir: Path):
         &mut wifi_resources.stack_resources,
         seed
     );
-        """)
+        """
+        )
 
         gen.add_main_code(
             "static STACK: static_cell::StaticCell<esphome_wifi::WifiStack> = static_cell::StaticCell::new();"
@@ -206,15 +213,33 @@ def generate_rust_project(config, output_dir: Path):
             ssid = wifi_conf.get(CONF_SSID, "")
             password = wifi_conf.get(CONF_PASSWORD, "")
 
-        gen.add_main_code(f"""
+        gen.add_main_code(
+            f"""
     let wifi_config = esphome_config::WifiConfig {{
         ssid: \"{ssid}\".to_string(),
         password: \"{password}\".to_string(),
         fast_connect: false,
     }};
-        """)
+        """
+        )
         gen.add_component_spawn(
             "spawner.spawn(esphome_wifi::connection_task(controller, wifi_config)).unwrap();"
+        )
+    # else:
+    #     stack_var = "None"
+
+    # API Setup
+    if "api" in config:
+        gen.add_dependency(
+            RustDependency("esphome-api", "0.1.0", path=str(rust_root / "esphome-api"))
+        )
+        gen.add_dependency(
+            RustDependency(
+                "prost", "0.13.0", default_features=False, features=["alloc"]
+            )
+        )
+        gen.add_component_spawn(
+            "spawner.spawn(esphome_api::api_server(stack)).unwrap();"
         )
 
     # Components
