@@ -74,13 +74,12 @@ def get_variant_info(config):
 def find_toolchain_path(toolchain_prefix):
     """
     Locate the bin directory for the given toolchain prefix (e.g., riscv32-esp-elf).
-    Checks system PATH first, then standard PlatformIO locations.
     """
     compiler_name = f"{toolchain_prefix}-g++"
 
     # 1. Check if it's already in PATH
     if shutil.which(compiler_name):
-        return None  # None means "use system path"
+        return None
 
     # 2. Check PlatformIO packages
     pio_packages = Path(os.path.expanduser("~/.platformio/packages"))
@@ -176,11 +175,9 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("#include <atomic>")
     code.append("")
 
-    # 1. Add namespace esphome to match standard main.cpp behavior
     code.append("using namespace esphome;")
     code.append("")
 
-    # 2. Forward declare Rust functions (extern "C")
     rust_decls = []
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
@@ -192,7 +189,6 @@ def generate_bridge_cpp(legacy_info, native_info):
         code.append("}")
         code.append("")
 
-    # 3. Native Component Proxies (C++ Classes)
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
             code.append(f"class {comp_id}Proxy : public switch_::Switch {{")
@@ -211,12 +207,10 @@ def generate_bridge_cpp(legacy_info, native_info):
             code.append(f"{comp_id}Proxy* {comp_id}_proxy = new {comp_id}Proxy();")
     code.append("")
 
-    # 4. Legacy Component Globals
     for comp_id, info in legacy_info.items():
         code.append(f"// Globals for {comp_id}")
         code.append(info["global_code"])
 
-    # 5. Extern C Exports (C++ functions called by Rust)
     code.append('extern "C" {')
     code.append("")
     code.append("void call_component_loop(void* component_ptr) {")
@@ -230,12 +224,8 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("}")
     code.append("")
 
-    # Factory functions
     for comp_id, info in legacy_info.items():
         code.append(f"void* create_{comp_id}() {{")
-        # Wrap setup code in a lambda. This allows 'return;' statements (used by SafeMode, etc.)
-        # to exit the lambda logic without causing a "return-statement with no value" error
-        # in this void* function.
         code.append("    [&]() {")
         code.append(indent(info["setup_code"]))
         code.append("    }();")
@@ -243,7 +233,6 @@ def generate_bridge_cpp(legacy_info, native_info):
         code.append("}")
         code.append("")
 
-    # Shadow update functions
     for comp_id, info in native_info.items():
         code.append(f"void update_shadow_{comp_id}(bool state) {{")
         code.append(
@@ -370,7 +359,7 @@ rustflags = [
 
 
 def generate_build_rs():
-    # Modified to link everything in the rust/libs directory
+    # Links everything in libs/ plus standard C/m libraries
     return """
 use std::env;
 use std::path::PathBuf;
@@ -382,7 +371,6 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", libs_dir.display());
 
-    // Iterate over all .a files in the libs directory and link them
     if let Ok(entries) = fs::read_dir(&libs_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -391,8 +379,10 @@ fn main() {
                     if let Some(stem) = path.file_stem() {
                         let name = stem.to_string_lossy();
                         if name.starts_with("lib") {
-                            // Link libname (remove 'lib' prefix)
-                            println!("cargo:rustc-link-lib=static={}", &name[3..]);
+                            // Avoid linking libmain.a or libesphome.a twice if filtered incorrectly
+                            if name != "libmain" {
+                                println!("cargo:rustc-link-lib=static={}", &name[3..]);
+                            }
                         }
                     }
                 }
@@ -400,8 +390,10 @@ fn main() {
         }
     }
 
-    println!("cargo:rustc-link-lib=stdc++");
-    println!("cargo:rustc-link-lib=gcc"); // Resolves _Unwind symbols
+    // Link Standard C/Math libraries to resolve sprintf/vsnprintf
+    println!("cargo:rustc-link-lib=c");
+    println!("cargo:rustc-link-lib=m");
+    println!("cargo:rustc-link-lib=gcc");
 
     println!("cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:rustc-link-arg=-lesphome");
@@ -817,38 +809,44 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         _LOGGER.error("Failed to archive libesphome.a: %s", e)
         return False
 
-    # 4. Gather Libraries (Framework libs + Blobs)
+    # 4. Gather Libraries
     _LOGGER.info("Gathering static libraries...")
 
-    # Strategy A: Copy all .a files found in the PIO build dir (libs built from source)
+    # Copy PIO-built libraries (e.g. libmanaged_components.a)
     for root, dirs, files in os.walk(env_dir):
         for file in files:
             if file.endswith(".a") and file != "libesphome.a":
-                src = Path(root) / file
-                dst = libs_dir / file
-                shutil.copy(src, dst)
+                shutil.copy(Path(root) / file, libs_dir / file)
 
-    # Strategy B: Find Precompiled Blobs in ~/.platformio/packages/framework-espidf
-    # This addresses 'undefined reference to esp_wifi...'
+    # RECURSIVE SEARCH for Binary Blobs in framework-espidf
     home = Path.home()
-    framework_dir = (
-        home / ".platformio" / "packages" / "framework-espidf" / "components"
-    )
+    framework_dir = home / ".platformio" / "packages" / "framework-espidf"
 
     if framework_dir.exists():
-        # Search for .a files in relevant components
-        # Note: blob_folder (e.g. esp32c3) is used to find specific binary versions
-        search_paths = [
-            framework_dir / "esp_wifi" / "lib" / blob_folder,
-            framework_dir / "esp_phy" / "lib" / blob_folder,
-            framework_dir / "bt" / "controller" / f"lib_{blob_folder}",
-            framework_dir / "bt" / "host" / "nimble" / "nimble" / "port" / "lib",
-        ]
+        # Find all .a files in framework-espidf that reside in a directory named 'blob_folder'
+        # e.g. components/esp_wifi/lib/esp32c3/libnet80211.a
+        _LOGGER.info(
+            "Searching framework-espidf for precompiled blobs (folder: %s)...",
+            blob_folder,
+        )
 
-        for search_path in search_paths:
-            if search_path.exists():
-                for lib in search_path.glob("*.a"):
-                    shutil.copy(lib, libs_dir / lib.name)
+        found_blobs = 0
+        for root, dirs, files in os.walk(framework_dir):
+            if Path(root).name == blob_folder:
+                for file in files:
+                    if file.endswith(".a"):
+                        src = Path(root) / file
+                        dst = libs_dir / file
+                        # Don't overwrite if PIO already built a version (unlikely for blobs)
+                        if not dst.exists():
+                            shutil.copy(src, dst)
+                            found_blobs += 1
+        _LOGGER.info("Found and copied %d binary blobs.", found_blobs)
+
+        if found_blobs == 0:
+            _LOGGER.warning(
+                "No binary blobs found! Check 'blob_folder' name in VARIANT_MAP."
+            )
     else:
         _LOGGER.warning(
             "ESP-IDF framework not found at %s. Linker errors likely.", framework_dir
@@ -969,8 +967,18 @@ def compile(config):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
 
+    log_file = build_dir / "cargo_build.log"
     try:
-        rc = subprocess.call(["cargo", "build", "--release"], cwd=build_dir)
+        with open(log_file, "w") as f:
+            _LOGGER.info("Writing Cargo output to %s", log_file)
+            # Redirect stdout and stderr to the log file
+            rc = subprocess.call(
+                ["cargo", "build", "--release"],
+                cwd=build_dir,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+            )
+        # rc = subprocess.call(["cargo", "build", "--release"], cwd=build_dir)
         if rc != 0:
             _LOGGER.error("Cargo build failed with return code %d", rc)
             return rc
