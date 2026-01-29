@@ -828,6 +828,19 @@ def command_vscode(args: ArgsProtocol) -> int | None:
 
 
 def command_compile(args: ArgsProtocol, config: ConfigType) -> int | None:
+    if getattr(args, "rust", False):
+        from esphome.rust_codegen import generate_rust_project
+
+        _LOGGER.info("Generating Rust project...")
+        generate_rust_project(config, Path(CORE.build_path))
+
+        if args.only_generate:
+            _LOGGER.info("Successfully generated Rust source code.")
+            return 0
+
+        _LOGGER.info("Compiling Rust app...")
+        return run_external_process("cargo", "build", "--release", cwd=CORE.build_path)
+
     native_idf = getattr(args, "native_idf", False)
     exit_code = write_cpp(config, native_idf=native_idf)
     if exit_code != 0:
@@ -884,6 +897,15 @@ def command_logs(args: ArgsProtocol, config: ConfigType) -> int | None:
 
 
 def command_run(args: ArgsProtocol, config: ConfigType) -> int | None:
+    if getattr(args, "rust", False):
+        from esphome.rust_codegen import generate_rust_project
+
+        _LOGGER.info("Generating Rust project...")
+        generate_rust_project(config, Path(CORE.build_path))
+
+        _LOGGER.info("Running Rust app...")
+        return run_external_process("cargo", "run", "--release", cwd=CORE.build_path)
+
     native_idf = getattr(args, "native_idf", False)
     exit_code = write_cpp(config, native_idf=native_idf)
     if exit_code != 0:
@@ -1344,6 +1366,11 @@ def parse_args(argv):
         help="Build with native ESP-IDF instead of PlatformIO (ESP32 esp-idf framework only).",
         action="store_true",
     )
+    parser_compile.add_argument(
+        "--rust",
+        help="Generate and build Rust firmware (Experimental).",
+        action="store_true",
+    )
 
     parser_upload = subparsers.add_parser(
         "upload",
@@ -1428,6 +1455,11 @@ def parse_args(argv):
     parser_run.add_argument(
         "--native-idf",
         help="Build with native ESP-IDF instead of PlatformIO (ESP32 esp-idf framework only).",
+        action="store_true",
+    )
+    parser_run.add_argument(
+        "--rust",
+        help="Generate and build Rust firmware (Experimental).",
         action="store_true",
     )
 

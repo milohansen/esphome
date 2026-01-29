@@ -1,0 +1,9 @@
+[package]
+name = "esphome-hal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+esphome-core = { path = "../esphome-core" }
+esp-hal = "0.22.0"
+log = "0.4"

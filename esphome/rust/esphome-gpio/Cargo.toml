@@ -1,0 +1,11 @@
+[package]
+name = "esphome-gpio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+esphome-core = { path = "../esphome-core" }
+esphome-hal = { path = "../esphome-hal" }
+embassy-sync = "0.6.0"
+async-trait = "0.1"
+log = "0.4"

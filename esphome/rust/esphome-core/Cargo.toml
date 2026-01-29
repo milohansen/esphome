@@ -1,0 +1,13 @@
+[package]
+name = "esphome-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embassy-sync = "0.6.0"
+embassy-time = "0.3.2"
+embassy-executor = { version = "0.6.0", default-features = false }
+async-trait = "0.1"
+log = "0.4"
+heapless = "0.8"
+serde = { version = "1.0", default-features = false }
