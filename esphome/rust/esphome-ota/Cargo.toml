@@ -12,4 +12,8 @@ embassy-time = "0.3.2"
 log = "0.4"
 esp-storage = "0.3.0"
 esp-hal = "0.22.0"
-# esp-partition-table = "0.1.0" # Might need this to find OTA partitions
+embedded-storage = "0.3"
+crc = "3.0"
+byteorder = { version = "1.4", default-features = false }
+md-5 = { version = "0.10", default-features = false }
+hex = { version = "0.4", default-features = false }
