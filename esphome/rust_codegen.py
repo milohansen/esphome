@@ -13,6 +13,7 @@ def get_pin_number(pin_config):
 
 
 def generate_gpio_switch(gen: RustGenerator, config, index):
+    # ... existing implementation ...
     switch_id = config.get("id", f"switch_{index}")
     pin_num = get_pin_number(config["pin"])
     inverted = config.get("inverted", False)
@@ -53,6 +54,91 @@ def generate_gpio_switch(gen: RustGenerator, config, index):
     # Add spawn call to main
     gen.add_component_spawn(
         f'spawner.spawn({task_name}(io.pins.gpio{pin_num})).expect("Failed to spawn {switch_id}");'
+    )
+
+
+def generate_gpio_binary_sensor(gen: RustGenerator, config, index):
+    # ... existing implementation ...
+    sensor_id = config.get("id", f"binary_sensor_{index}")
+    pin_num = get_pin_number(config["pin"])
+    inverted = config.get("inverted", False)
+    pullup = config.get("pullup", False)
+    pulldown = config.get("pulldown", False)
+
+    # Generate task function
+    task_name = f"{sensor_id}_task"
+
+    body = f"""
+    use embassy_sync::channel::Channel;
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use esphome_core::{{Component, ActorAddress}};
+    use esphome_gpio::binary_sensor::{{GpioBinarySensor, GpioBinarySensorConfig, BinarySensorEvent}};
+
+    static MAILBOX: Channel<CriticalSectionRawMutex, (), 8> = Channel::new();
+
+    let mut comp = GpioBinarySensor::new("{sensor_id}");
+    let config = GpioBinarySensorConfig {{
+        pin,
+        inverted: {str(inverted).lower()},
+        pullup: {str(pullup).lower()},
+        pulldown: {str(pulldown).lower()},
+    }};
+
+    comp.setup(config).await.expect("Setup failed");
+    comp.run(MAILBOX.receiver()).await;
+    """
+
+    func = RustFunction(
+        name=task_name,
+        body=body,
+        is_async=True,
+        attributes=["#[embassy_executor::task]"],
+        args=[f"pin: esp_hal::gpio::GpioPin<{pin_num}>"],
+    )
+
+    gen.add_function(func)
+
+    # Add spawn call to main
+    gen.add_component_spawn(
+        f'spawner.spawn({task_name}(io.pins.gpio{pin_num})).expect("Failed to spawn {sensor_id}");'
+    )
+
+
+def generate_uptime_sensor(gen: RustGenerator, config, index):
+    sensor_id = config.get("id", f"uptime_sensor_{index}")
+    update_interval = config.get("update_interval", "60s")
+    # Simple duration parsing (placeholder)
+    # TODO: Use esphome's cv.TimePeriod normalized value
+    seconds = 60
+    if isinstance(update_interval, str) and update_interval.endswith("s"):
+        seconds = int(update_interval[:-1])
+
+    task_name = f"{sensor_id}_task"
+
+    body = f"""
+    use embassy_sync::channel::Channel;
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_time::Duration;
+    use esphome_core::Component;
+    use esphome_uptime::UptimeSensor;
+
+    static MAILBOX: Channel<CriticalSectionRawMutex, (), 8> = Channel::new();
+
+    let mut comp = UptimeSensor::new("{sensor_id}");
+    comp.setup(Duration::from_secs({seconds})).await.expect("Setup failed");
+    comp.run(MAILBOX.receiver()).await;
+    """
+
+    func = RustFunction(
+        name=task_name,
+        body=body,
+        is_async=True,
+        attributes=["#[embassy_executor::task]"],
+    )
+
+    gen.add_function(func)
+    gen.add_component_spawn(
+        f'spawner.spawn({task_name}()).expect("Failed to spawn {sensor_id}");'
     )
 
 
@@ -242,6 +328,15 @@ def generate_rust_project(config, output_dir: Path):
             "spawner.spawn(esphome_api::api_server(stack)).unwrap();"
         )
 
+    # OTA Setup
+    if "ota" in config:
+        gen.add_dependency(
+            RustDependency("esphome-ota", "0.1.0", path=str(rust_root / "esphome-ota"))
+        )
+        gen.add_component_spawn(
+            "spawner.spawn(esphome_ota::ota_server(stack)).unwrap();"
+        )
+
     # Components
     if "switch" in config:
         gen.add_dependency(
@@ -252,6 +347,37 @@ def generate_rust_project(config, output_dir: Path):
         for i, conf in enumerate(config["switch"]):
             if conf.get("platform") == "gpio":
                 generate_gpio_switch(gen, conf, i)
+
+    if "binary_sensor" in config:
+        if "esphome-gpio" not in [d.name for d in gen.dependencies]:
+            gen.add_dependency(
+                RustDependency(
+                    "esphome-gpio", "0.1.0", path=str(rust_root / "esphome-gpio")
+                )
+            )
+        for i, conf in enumerate(config["binary_sensor"]):
+            if conf.get("platform") == "gpio":
+                generate_gpio_binary_sensor(gen, conf, i)
+
+    if "sensor" in config:
+        for i, conf in enumerate(config["sensor"]):
+            if conf.get("platform") == "uptime":
+                if "esphome-uptime" not in [d.name for d in gen.dependencies]:
+                    gen.add_dependency(
+                        RustDependency(
+                            "esphome-uptime",
+                            "0.1.0",
+                            path=str(rust_root / "esphome-uptime"),
+                        )
+                    )
+                    gen.add_dependency(
+                        RustDependency(
+                            "esphome-sensor",
+                            "0.1.0",
+                            path=str(rust_root / "esphome-sensor"),
+                        )
+                    )
+                generate_uptime_sensor(gen, conf, i)
 
     # Write Output
     src_dir = output_dir / "src"

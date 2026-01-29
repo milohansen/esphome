@@ -1,0 +1,9 @@
+[package]
+name = "esphome-sensor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+esphome-core = { path = "../esphome-core" }
+log = "0.4"
+heapless = "0.8"

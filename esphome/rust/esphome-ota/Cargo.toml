@@ -1,0 +1,15 @@
+[package]
+name = "esphome-ota"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+esphome-core = { path = "../esphome-core" }
+esphome-wifi = { path = "../esphome-wifi" }
+embassy-net = { version = "0.6.0", features = ["tcp"] }
+embassy-executor = "0.6.0"
+embassy-time = "0.3.2"
+log = "0.4"
+esp-storage = "0.3.0"
+esp-hal = "0.22.0"
+# esp-partition-table = "0.1.0" # Might need this to find OTA partitions

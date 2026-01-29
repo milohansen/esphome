@@ -7,6 +7,9 @@ members = [
     "esphome-gpio",
     "esphome-wifi",
     "esphome-api",
+    "esphome-sensor",
+    "esphome-uptime",
+    "esphome-ota",
 ]
 
 [profile.release]
