@@ -329,7 +329,9 @@ panic = "abort"
 """
 
 
-def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
+def generate_cargo_config(
+    target_triple, toolchain_path, toolchain_prefix, ld_scripts=None
+):
     linker_line = ""
     if toolchain_path:
         linker = toolchain_path / f"{toolchain_prefix}-g++"
@@ -351,6 +353,13 @@ def generate_cargo_config(target_triple, toolchain_path, toolchain_prefix):
         "link-arg=-L.",
     ]
 
+    # Selectively add PlatformIO Linker Scripts
+    if ld_scripts:
+        for script in ld_scripts:
+            # We must use absolute paths
+            flags.append("-C")
+            flags.append(f"link-arg=-T{script}")
+
     rustflags_str = ", ".join([f'"{f}"' for f in flags])
 
     return f"""
@@ -367,8 +376,9 @@ rustflags = [
 
 
 def generate_build_rs():
-    # CRITICAL: Use rustc-link-arg=-l<name> inside start-group.
-    # This solves the circular dependencies (undefined refs) WITHOUT conflicting memory maps.
+    # LINKER FIXES:
+    # 1. Use --start-group/--end-group with -l<name> args to resolve circular deps.
+    # 2. Add -lnosys to fix undefined references to _write, _read, etc.
     return """
 use std::env;
 use std::path::PathBuf;
@@ -381,7 +391,6 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", libs_dir.display());
 
     // START LINKER GROUP
-    // Resolves circular dependencies: libesphome <-> libfreertos <-> libwifi
     println!("cargo:rustc-link-arg=-Wl,--start-group");
 
     // 1. Link libesphome.a (Application code)
@@ -408,11 +417,13 @@ fn main() {
     }
 
     // 3. Link Standard C/C++ Libraries (System) inside the group
-    // Needed for new/delete, math, standard IO stubs
     println!("cargo:rustc-link-arg=-lstdc++");
     println!("cargo:rustc-link-arg=-lc");
     println!("cargo:rustc-link-arg=-lm");
     println!("cargo:rustc-link-arg=-lgcc");
+
+    // 4. Link libnosys for syscall stubs (_write, _read, etc.)
+    println!("cargo:rustc-link-arg=-lnosys");
 
     // END LINKER GROUP
     println!("cargo:rustc-link-arg=-Wl,--end-group");
@@ -973,6 +984,7 @@ def compile(config):
     _LOGGER.info("Compiling Rust migration project in %s...", build_dir)
 
     variant_info = get_variant_info(config)
+    target_triple = variant_info["target"]
     toolchain_prefix = variant_info["toolchain"]
     blob_folder = variant_info["blob_folder"]
     toolchain_path = find_toolchain_path(toolchain_prefix)
@@ -981,9 +993,35 @@ def compile(config):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
 
-    # REMOVED: Manual search for PlatformIO linker scripts.
-    # We rely on Rust's esp-hal to provide the memory map (linkall.x).
-    # The build.rs modification (Group Linking) handles the undefined symbols.
+    # RESTORED AND FILTERED: Find PlatformIO linker scripts
+    # We must include *.ld (like sections.ld, peripherals.ld) but exclude memory.ld
+    # to avoid conflict with Rust's linkall.x
+    esphome_build_dir = build_dir.parent
+    pio_build_dir = esphome_build_dir / ".pio" / "build"
+    env_dir = None
+    if pio_build_dir.exists():
+        for d in pio_build_dir.iterdir():
+            if d.is_dir() and d.name != "project.checksum":
+                env_dir = d
+                break
+
+    ld_scripts = []
+    if env_dir:
+        for file in env_dir.iterdir():
+            if file.suffix == ".ld":
+                if "memory.ld" in file.name:
+                    _LOGGER.info("Skipping conflicting linker script: %s", file.name)
+                else:
+                    _LOGGER.info("Adding PlatformIO linker script: %s", file.name)
+                    ld_scripts.append(file.absolute())
+
+    cargo_config_dir = build_dir / ".cargo"
+    write_file_if_changed(
+        cargo_config_dir / "config.toml",
+        generate_cargo_config(
+            target_triple, toolchain_path, toolchain_prefix, ld_scripts
+        ),
+    )
 
     log_file = build_dir / "cargo_build.log"
     try:
