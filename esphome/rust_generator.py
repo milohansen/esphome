@@ -23,31 +23,37 @@ VARIANT_MAP = {
         "target": "xtensa-esp32-none-elf",
         "feature": "esp32",
         "toolchain": "xtensa-esp32-elf",
+        "blob_folder": "esp32",
     },
     "esp32s2": {
         "target": "xtensa-esp32s2-none-elf",
         "feature": "esp32s2",
         "toolchain": "xtensa-esp32s2-elf",
+        "blob_folder": "esp32s2",
     },
     "esp32s3": {
         "target": "xtensa-esp32s3-none-elf",
         "feature": "esp32s3",
         "toolchain": "xtensa-esp32s3-elf",
+        "blob_folder": "esp32s3",
     },
     "esp32c3": {
         "target": "riscv32imc-unknown-none-elf",
         "feature": "esp32c3",
         "toolchain": "riscv32-esp-elf",
+        "blob_folder": "esp32c3",
     },
     "esp32c6": {
         "target": "riscv32imac-unknown-none-elf",
         "feature": "esp32c6",
         "toolchain": "riscv32-esp-elf",
+        "blob_folder": "esp32c6",
     },
     "esp32h2": {
         "target": "riscv32imac-unknown-none-elf",
         "feature": "esp32h2",
         "toolchain": "riscv32-esp-elf",
+        "blob_folder": "esp32h2",
     },
 }
 
@@ -171,12 +177,10 @@ def generate_bridge_cpp(legacy_info, native_info):
     code.append("")
 
     # 1. Add namespace esphome to match standard main.cpp behavior
-    # This fixes resolution for 'App', 'Component', and 'ENTITY_CATEGORY_CONFIG'
     code.append("using namespace esphome;")
     code.append("")
 
     # 2. Forward declare Rust functions (extern "C")
-    # Collect them first to avoid generating an empty extern "C" {} block
     rust_decls = []
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
@@ -191,7 +195,6 @@ def generate_bridge_cpp(legacy_info, native_info):
     # 3. Native Component Proxies (C++ Classes)
     for comp_id, info in native_info.items():
         if info["platform"] == "gpio_switch":
-            # Note: switch_::Switch is accessible because of 'using namespace esphome;'
             code.append(f"class {comp_id}Proxy : public switch_::Switch {{")
             code.append(" public:")
             code.append("  void write_state(bool state) override {")
@@ -367,24 +370,38 @@ rustflags = [
 
 
 def generate_build_rs():
-    # Looks for libesphome.a in the OUT_DIR or relative .pio path
+    # Modified to link everything in the rust/libs directory
     return """
 use std::env;
 use std::path::PathBuf;
+use std::fs;
 
 fn main() {
-    // libesphome.a is now created by the rust_generator.py script
-    // and placed in the .pio/build folder (or root).
-
-    // We expect libesphome.a to be in the pio build directory
-    println!("cargo:rustc-link-search=native=../../../.pio/build");
-
-    // Also search current dir just in case
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:rustc-link-search=native={}", manifest_dir);
+    let libs_dir = PathBuf::from(manifest_dir).join("libs");
 
-    println!("cargo:rustc-link-lib=static=esphome");
+    println!("cargo:rustc-link-search=native={}", libs_dir.display());
+
+    // Iterate over all .a files in the libs directory and link them
+    if let Ok(entries) = fs::read_dir(&libs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "a" {
+                    if let Some(stem) = path.file_stem() {
+                        let name = stem.to_string_lossy();
+                        if name.starts_with("lib") {
+                            // Link libname (remove 'lib' prefix)
+                            println!("cargo:rustc-link-lib=static={}", &name[3..]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     println!("cargo:rustc-link-lib=stdc++");
+    println!("cargo:rustc-link-lib=gcc"); // Resolves _Unwind symbols
 
     println!("cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:rustc-link-arg=-lesphome");
@@ -746,27 +763,26 @@ impl GpioBinarySensor {
 """
 
 
-def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix):
+def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
     """
-    Builds the C++ code using PlatformIO (ignoring link errors) and archives
-    objects into libesphome.a
+    1. Runs PIO build.
+    2. Collects object files into libesphome.a.
+    3. Scans for ALL other .a libraries (from framework, wifi blobs, etc) and copies them to rust/libs/
     """
     _LOGGER.info("Starting C++ compilation via PlatformIO...")
-
-    # 1. Run PIO Build (expect failure at link stage due to duplicate main or missing symbols)
-    # We ignore the return code because we only care about the object files.
-    # Note: We must run this in the root build directory (parent of rust/)
     esphome_build_dir = build_dir.parent
 
-    # We assume 'pio' is in PATH. If not, user might need to activate venv.
-    # We run 'pio run' which builds the default environment.
+    # 1. Run PIO Build
     subprocess.call(["pio", "run"], cwd=esphome_build_dir)
 
-    # 2. Find object files
-    # The .pio directory is in esphome_build_dir/.pio
+    # 2. Setup Directories
     pio_dir = esphome_build_dir / ".pio" / "build"
+    libs_dir = build_dir / "libs"
+    if libs_dir.exists():
+        shutil.rmtree(libs_dir)
+    libs_dir.mkdir()
 
-    # Find the environment directory (first subdir in build/)
+    # Find environment dir
     env_dir = None
     if pio_dir.exists():
         for d in pio_dir.iterdir():
@@ -778,58 +794,67 @@ def build_cpp_lib(build_dir, toolchain_path, toolchain_prefix):
         _LOGGER.error("Could not find PlatformIO build environment in %s", pio_dir)
         return False
 
-    _LOGGER.info("Found PlatformIO environment at %s", env_dir)
-
-    # Gather .o files
-    # We want src/*.o (project code + bridge) and lib/* (dependencies)
-    # We might also need objects from the core if they are compiled into src/
-
+    # 3. Create libesphome.a from .o files (Application Code)
     obj_files = []
-    # Recursively find all .o files in the environment build dir
     for root, dirs, files in os.walk(env_dir):
         obj_files.extend(
-            os.path.join(root, file) for file in files if file.endswith(".o")
+            [os.path.join(root, file) for file in files if file.endswith(".o")]
         )
 
     if not obj_files:
-        _LOGGER.error(
-            "No object files found in %s. PlatformIO build likely failed early.",
-            env_dir,
-        )
+        _LOGGER.error("No object files found in %s", env_dir)
         return False
 
-    _LOGGER.info(
-        "Found %d object files. Archiving into libesphome.a...", len(obj_files)
-    )
-
-    # 3. Archive into libesphome.a
-    lib_path = build_dir / "libesphome.a"
-    if lib_path.exists():
-        lib_path.unlink()
-
-    # Find 'ar' tool
     ar_tool = "ar"
     if toolchain_path:
         ar_tool = toolchain_path / f"{toolchain_prefix}-ar"
 
-    # Run ar rcs libesphome.a <files>
-    # Note: Command line length limit might be hit if too many files.
-    # Can pass files in chunks if necessary, but typical ESPHome project fits.
-
-    # Using 'rcs' flags: replace, create, sort index
-    cmd = [str(ar_tool), "rcs", str(lib_path)] + obj_files
-
+    libesphome_path = libs_dir / "libesphome.a"
     try:
-        subprocess.check_call(cmd)
-        _LOGGER.info("Successfully created %s", lib_path)
-
-        # Also copy it to the pio build dir just in case build.rs looks there
-        shutil.copy(lib_path, pio_dir / "libesphome.a")
-
-        return True
+        subprocess.check_call([str(ar_tool), "rcs", str(libesphome_path)] + obj_files)
+        _LOGGER.info("Created %s", libesphome_path)
     except Exception as e:
-        _LOGGER.error("Failed to archive library: %s", e)
+        _LOGGER.error("Failed to archive libesphome.a: %s", e)
         return False
+
+    # 4. Gather Libraries (Framework libs + Blobs)
+    _LOGGER.info("Gathering static libraries...")
+
+    # Strategy A: Copy all .a files found in the PIO build dir (libs built from source)
+    for root, dirs, files in os.walk(env_dir):
+        for file in files:
+            if file.endswith(".a") and file != "libesphome.a":
+                src = Path(root) / file
+                dst = libs_dir / file
+                shutil.copy(src, dst)
+
+    # Strategy B: Find Precompiled Blobs in ~/.platformio/packages/framework-espidf
+    # This addresses 'undefined reference to esp_wifi...'
+    home = Path.home()
+    framework_dir = (
+        home / ".platformio" / "packages" / "framework-espidf" / "components"
+    )
+
+    if framework_dir.exists():
+        # Search for .a files in relevant components
+        # Note: blob_folder (e.g. esp32c3) is used to find specific binary versions
+        search_paths = [
+            framework_dir / "esp_wifi" / "lib" / blob_folder,
+            framework_dir / "esp_phy" / "lib" / blob_folder,
+            framework_dir / "bt" / "controller" / f"lib_{blob_folder}",
+            framework_dir / "bt" / "host" / "nimble" / "nimble" / "port" / "lib",
+        ]
+
+        for search_path in search_paths:
+            if search_path.exists():
+                for lib in search_path.glob("*.a"):
+                    shutil.copy(lib, libs_dir / lib.name)
+    else:
+        _LOGGER.warning(
+            "ESP-IDF framework not found at %s. Linker errors likely.", framework_dir
+        )
+
+    return True
 
 
 async def generate(config):
@@ -839,6 +864,7 @@ async def generate(config):
     target_triple = variant_info["target"]
     rust_feature = variant_info["feature"]
     toolchain_prefix = variant_info["toolchain"]
+    # blob_folder = variant_info["blob_folder"]
 
     _LOGGER.info(
         "Detected variant: %s, feature: %s, target: %s",
@@ -936,10 +962,10 @@ def compile(config):
 
     variant_info = get_variant_info(config)
     toolchain_prefix = variant_info["toolchain"]
+    blob_folder = variant_info["blob_folder"]
     toolchain_path = find_toolchain_path(toolchain_prefix)
 
-    # NEW: Build C++ static library first
-    if not build_cpp_lib(build_dir, toolchain_path, toolchain_prefix):
+    if not build_cpp_lib(build_dir, toolchain_path, toolchain_prefix, blob_folder):
         _LOGGER.error("Failed to build C++ library. Aborting Rust compilation.")
         return 1
 
