@@ -13,6 +13,7 @@ members = [
     "components/ota",
     "components/sensor",
     "components/uptime",
+    "components/interval",
     "components/datetime",
 ]
 
