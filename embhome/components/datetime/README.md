@@ -9,6 +9,7 @@ Actor-based component for managing date and time entities in the ESPHome-style m
 - ✅ Message-passing interface for setting and getting state.
 - ✅ Event-driven notifications for state changes.
 - ✅ Generic and self-contained (no hardware dependencies).
+- ✅ Compatible with ESPHome configuration schema.
 
 ## YAML Configuration
 
@@ -16,8 +17,21 @@ Actor-based component for managing date and time entities in the ESPHome-style m
 datetime:
   - platform: template
     name: "Target Date"
+    id: my_date
+    icon: "mdi:calendar"
     type: DATE
-    update_interval: 60 # Optional periodic tick
+    time_id: my_rtc         # Optional link to RTC
+    mqtt_id: my_mqtt       # Recognized but not yet implemented
+    web_server: true       # Recognized but not yet implemented
+    on_value:              # Handled via DatetimeEvent::StateChanged
+      then:
+        - ...
+    on_time:               # Handled by external timer actors
+      - seconds: 0
+        minutes: 30
+        hours: 10
+        then:
+          - ...
 ```
 
 ## Messages

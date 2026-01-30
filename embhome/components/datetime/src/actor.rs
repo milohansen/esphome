@@ -36,6 +36,16 @@ impl DatetimeActor {
     ) -> ! {
         info!("Datetime actor '{}' starting", self.config.name);
 
+        if self.config.mqtt_id.is_some() {
+            warn!("Datetime actor '{}': MQTT integration is not yet implemented in Rust actor", self.config.name);
+        }
+        if self.config.web_server.is_some() {
+            warn!("Datetime actor '{}': Web Server integration is not yet implemented in Rust actor", self.config.name);
+        }
+        if let Some(ref rtc) = self.config.time_id {
+            info!("Datetime actor '{}': Linked to RTC '{}'", self.config.name, rtc);
+        }
+
         self.initialized = true;
         let _ = event_tx.send(DatetimeEvent::Ready).await;
 

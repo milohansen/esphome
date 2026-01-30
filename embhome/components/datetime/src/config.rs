@@ -16,6 +16,8 @@ pub enum DatetimeType {
 }
 
 /// Datetime configuration
+///
+/// Matches the ESPHome configuration schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatetimeConfig {
     /// Component instance ID
@@ -25,13 +27,36 @@ pub struct DatetimeConfig {
     /// Human-readable name
     pub name: String<32>,
 
+    /// Icon for the entity
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String<32>>,
+
     /// Type of datetime entity
-    #[serde(default = "default_type")]
+    #[serde(default = "default_type", rename = "type")]
     pub type_: DatetimeType,
 
-    /// Update interval in seconds (optional)
+    /// Reference to a Real Time Clock component
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_interval: Option<u64>,
+    pub time_id: Option<String<32>>,
+
+    /// MQTT configuration ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mqtt_id: Option<String<32>>,
+
+    /// Web server configuration
+    /// Note: Accepted in config but currently not functional in Rust actor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_server: Option<bool>,
+
+    /// Automation triggered when value changes
+    /// Note: Handled by the core system via DatetimeEvent::StateChanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_value: Option<bool>,
+
+    /// Automation triggered at specific time
+    /// Note: Handled by the core system or external timer actors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_time: Option<bool>,
 }
 
 fn default_type() -> DatetimeType {
@@ -43,8 +68,13 @@ impl Default for DatetimeConfig {
         Self {
             id: None,
             name: "Datetime".into(),
+            icon: None,
             type_: default_type(),
-            update_interval: None,
+            time_id: None,
+            mqtt_id: None,
+            web_server: None,
+            on_value: None,
+            on_time: None,
         }
     }
 }

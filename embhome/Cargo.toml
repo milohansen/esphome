@@ -13,6 +13,7 @@ members = [
     "components/ota",
     "components/sensor",
     "components/uptime",
+    "components/datetime",
 ]
 
 # Workspace-level dependency management ensures only one version of each dependency
