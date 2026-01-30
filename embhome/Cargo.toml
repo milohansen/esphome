@@ -14,6 +14,7 @@ members = [
     "components/sensor",
     "components/uptime",
     "components/interval",
+    "components/datetime",
 ]
 
 # Workspace-level dependency management ensures only one version of each dependency
