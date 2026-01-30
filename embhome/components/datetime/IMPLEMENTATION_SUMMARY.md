@@ -12,16 +12,12 @@
 
 ## What Was Changed
 - **Async First**: All interactions are async and follow the `embassy` pattern.
-- **Unified Actor**: A single Actor handles date, time, and datetime operations, providing a unified interface that matches the expected API methods in ESPHome.
-- **Removed `type`**: Per feedback, removed the `type` configuration field as it is not part of the original base schema.
-- **Removed MQTT and Webserver**: Per feedback, removed `mqtt_id` and `web_server` configuration options as they are not yet defined in the Rust environment.
+- **Unified Actor**: A single Actor handles date, time, and datetime operations.
+- **Removed `type`**: Removed the `type` configuration field as it is not part of the original base schema.
+- **Removed MQTT and Webserver**: Removed `mqtt_id` and `web_server` configuration options as they are not yet defined in the Rust environment.
 
 ## What Was Not Implemented
 - **In-Actor Automation Execution**: `on_value` and `on_time` triggers are accepted in config but the logic for executing them is expected to be handled by the core system or separate automation actors listening to `DatetimeEvent`.
-
-## Testing Recommendations
-- Verify that setting invalid dates returns an `Error` event.
-- Verify that `StateChanged` events contain the correct updated fields.
 
 ## ESPHome Equivalence
 | ESPHome Feature | Rust Implementation | Notes |
