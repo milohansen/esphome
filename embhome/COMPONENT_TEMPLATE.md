@@ -101,6 +101,7 @@ let component = Component::new();
 ## Rust Code Style
 
 - Use esp-hal for peripheral access
+- Leverage `embassy` and `esp-rs` whenever possible
 - Implement embedded-hal traits where applicable
 - Type-safe error handling
 - Brief inline docs (not verbose)
