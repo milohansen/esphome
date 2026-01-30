@@ -2,7 +2,7 @@ use crate::config::IntervalConfig;
 use crate::messages::{IntervalMessage, IntervalEvent};
 use crate::error::IntervalError;
 use esphome_core::{Component, ComponentError, ActorAddress};
-use embassy_time::{Duration, Timer, Instant};
+use embassy_time::{Duration, Timer, Instant, Ticker};
 use embassy_sync::channel::Receiver;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_futures::select::{select, Either};
@@ -62,19 +62,14 @@ impl Component for IntervalActor {
     }
 
     async fn run(&mut self, mailbox: Receiver<'static, CriticalSectionRawMutex, Self::Message, 8>) {
-        if self.startup_delay.as_ticks() > 0 {
-            let end = Instant::now() + self.startup_delay;
+        // Handle startup delay
+        if !self.startup_delay.is_zero() {
+            let mut delay_timer = Timer::after(self.startup_delay);
             loop {
-                let now = Instant::now();
-                if now >= end { break; }
-                match select(mailbox.receive(), Timer::at(end)).await {
-                    Either::First(msg) => {
-                        match msg {
-                            IntervalMessage::SetInterval(d) => {
-                                self.interval = d;
-                            }
-                        }
-                    }
+                match select(mailbox.receive(), &mut delay_timer).await {
+                    Either::First(msg) => match msg {
+                        IntervalMessage::SetInterval(d) => self.interval = d,
+                    },
                     Either::Second(_) => break,
                 }
             }
@@ -82,23 +77,21 @@ impl Component for IntervalActor {
 
         self.publish(IntervalEvent::Ready);
 
+        // Periodic trigger using Ticker to prevent drift and leverage embassy's async features
+        let mut ticker = Ticker::every(self.interval);
         loop {
-            let next_trigger = Instant::now() + self.interval;
-            loop {
-                let now = Instant::now();
-                if now >= next_trigger { break; }
-                match select(mailbox.receive(), Timer::at(next_trigger)).await {
-                    Either::First(msg) => {
-                        match msg {
-                            IntervalMessage::SetInterval(d) => {
-                                self.interval = d;
-                            }
-                        }
+            match select(mailbox.receive(), ticker.next()).await {
+                Either::First(msg) => match msg {
+                    IntervalMessage::SetInterval(d) => {
+                        self.interval = d;
+                        // Reset ticker with new interval
+                        ticker = Ticker::every(self.interval);
                     }
-                    Either::Second(_) => break,
+                },
+                Either::Second(_) => {
+                    self.publish(IntervalEvent::Triggered);
                 }
             }
-            self.publish(IntervalEvent::Triggered);
         }
     }
 }
