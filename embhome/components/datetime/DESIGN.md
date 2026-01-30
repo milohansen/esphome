@@ -22,15 +22,7 @@ datetime/
 pub struct DatetimeConfig {
     pub id: Option<String>,
     pub name: String,
-    pub type_: DatetimeType,
     pub update_interval: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum DatetimeType {
-    Date,
-    Time,
-    DateTime,
 }
 ```
 
@@ -75,6 +67,7 @@ pub struct DatetimeState {
 ## Implementation Notes
 - The actor will maintain the current state and validate any incoming `Set*` messages.
 - If an RTC is linked (in future expansion), it would synchronize with it.
+- The `type` configuration was removed per feedback to match the base schema.
 - Validation logic from C++ will be ported:
     - Year: 1970-3000
     - Month: 1-12

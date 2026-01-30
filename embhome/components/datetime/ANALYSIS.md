@@ -16,8 +16,6 @@ Reasoning: The `datetime` component provides high-level entities for interacting
 
 ## Configuration Schema (from Python)
 ```yaml
-# The schema is split into DATE, TIME, and DATETIME types.
-# Common fields:
 datetime:
   - platform: template # Example platform
     name: "My Date"
@@ -42,8 +40,8 @@ datetime:
 
 ### Messages (what this component receives):
 - `Initialize`: Set initial state or reset.
-- `SetDate(year, month, day)`: Update date (for Date/DateTime entities).
-- `SetTime(hour, minute, second)`: Update time (for Time/DateTime entities).
+- `SetDate(year, month, day)`: Update date.
+- `SetTime(hour, minute, second)`: Update time.
 - `SetDateTime(year, month, day, hour, minute, second)`: Update both.
 - `GetState(response_channel)`: Request current date/time state.
 
