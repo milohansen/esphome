@@ -1,0 +1,32 @@
+[package]
+name = "datetime-component"
+version = "0.1.0"
+edition = "2021"
+description = "DateTime component for ESP32"
+license = "MIT"
+
+[dependencies]
+# Embassy essentials
+embassy-sync = "0.6"
+embassy-time = "0.3"
+embassy-futures = "0.1"
+
+# Async HAL traits
+embedded-hal-async = "1.0"
+
+# Serialization for config
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+
+# Logging
+log = { version = "0.4", default-features = false }
+
+# Collections (no_std)
+heapless = "0.8"
+
+[dev-dependencies]
+# For examples only
+esp-hal = { version = "0.22", features = ["esp32"] }
+esp-backtrace = { version = "0.15", features = ["esp32", "panic-handler", "exception-handler"] }
+esp-println = { version = "0.13", features = ["esp32", "log"] }
+embassy-executor = { version = "0.7", features = ["arch-xtensa", "executor-thread"] }
+static_cell = "2.1"
