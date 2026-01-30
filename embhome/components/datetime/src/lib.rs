@@ -9,7 +9,6 @@
 //! datetime:
 //!   - platform: template
 //!     name: "Target Date"
-//!     type: DATE
 //! ```
 
 #![no_std]
@@ -20,6 +19,6 @@ pub mod error;
 pub mod messages;
 
 pub use actor::DatetimeActor;
-pub use config::{DatetimeConfig, DatetimeType};
+pub use config::DatetimeConfig;
 pub use error::DatetimeError;
 pub use messages::{DatetimeEvent, DatetimeMessage, DatetimeState};

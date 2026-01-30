@@ -4,7 +4,7 @@ Actor-based component for managing date and time entities in the ESPHome-style m
 
 ## Features
 
-- ✅ Support for Date, Time, and DateTime entity types.
+- ✅ Support for Date, Time, and DateTime entities.
 - ✅ Validation of input values (leap years, month days, etc.).
 - ✅ Message-passing interface for setting and getting state.
 - ✅ Event-driven notifications for state changes.
@@ -19,10 +19,7 @@ datetime:
     name: "Target Date"
     id: my_date
     icon: "mdi:calendar"
-    type: DATE
     time_id: my_rtc         # Optional link to RTC
-    mqtt_id: my_mqtt       # Recognized but not yet implemented
-    web_server: true       # Recognized but not yet implemented
     on_value:              # Handled via DatetimeEvent::StateChanged
       then:
         - ...
@@ -37,9 +34,9 @@ datetime:
 ## Messages
 
 ### Received
-- `SetDate { year, month, day }`: Update date (for Date/DateTime types).
-- `SetTime { hour, minute, second }`: Update time (for Time/DateTime types).
-- `SetDateTime { ... }`: Update both (for DateTime type).
+- `SetDate { year, month, day }`: Update date.
+- `SetTime { hour, minute, second }`: Update time.
+- `SetDateTime { ... }`: Update both.
 - `GetState(response)`: Request current state.
 - `Shutdown`: Graceful shutdown.
 

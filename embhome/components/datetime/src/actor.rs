@@ -1,12 +1,11 @@
 //! Datetime actor implementation
 
-use embassy_futures::select::{select, Either};
 use embassy_sync::channel::{Receiver, Sender};
-use embassy_time::{Duration, Instant, Timer};
-use log::{debug, info, warn};
+use embassy_time::{Instant};
+use log::{info};
 
 use crate::{
-    config::{DatetimeConfig, DatetimeType},
+    config::DatetimeConfig,
     error::DatetimeError,
     messages::{DatetimeEvent, DatetimeMessage, DatetimeState},
 };
@@ -36,12 +35,6 @@ impl DatetimeActor {
     ) -> ! {
         info!("Datetime actor '{}' starting", self.config.name);
 
-        if self.config.mqtt_id.is_some() {
-            warn!("Datetime actor '{}': MQTT integration is not yet implemented in Rust actor", self.config.name);
-        }
-        if self.config.web_server.is_some() {
-            warn!("Datetime actor '{}': Web Server integration is not yet implemented in Rust actor", self.config.name);
-        }
         if let Some(ref rtc) = self.config.time_id {
             info!("Datetime actor '{}': Linked to RTC '{}'", self.config.name, rtc);
         }
@@ -50,60 +43,41 @@ impl DatetimeActor {
         let _ = event_tx.send(DatetimeEvent::Ready).await;
 
         loop {
-            let timeout = self.config.update_interval.map(Duration::from_secs);
-
-            let result = if let Some(t) = timeout {
-                match select(message_rx.receive(), Timer::after(t)).await {
-                    Either::First(msg) => Some(msg),
-                    Either::Second(_) => None, // Periodic tick
-                }
-            } else {
-                Some(message_rx.receive().await)
-            };
-
-            if let Some(msg) = result {
-                match msg {
-                    DatetimeMessage::SetDate { year, month, day } => {
-                        if let Err(e) = self.set_date(year, month, day) {
-                            let _ = event_tx.send(DatetimeEvent::Error(e)).await;
-                        } else {
-                            let _ = event_tx.send(DatetimeEvent::StateChanged(self.state)).await;
-                        }
-                    }
-                    DatetimeMessage::SetTime { hour, minute, second } => {
-                        if let Err(e) = self.set_time(hour, minute, second) {
-                            let _ = event_tx.send(DatetimeEvent::Error(e)).await;
-                        } else {
-                            let _ = event_tx.send(DatetimeEvent::StateChanged(self.state)).await;
-                        }
-                    }
-                    DatetimeMessage::SetDateTime { year, month, day, hour, minute, second } => {
-                        if let Err(e) = self.set_datetime(year, month, day, hour, minute, second) {
-                            let _ = event_tx.send(DatetimeEvent::Error(e)).await;
-                        } else {
-                            let _ = event_tx.send(DatetimeEvent::StateChanged(self.state)).await;
-                        }
-                    }
-                    DatetimeMessage::GetState(response_tx) => {
-                        let _ = response_tx.send(Ok(self.state)).await;
-                    }
-                    DatetimeMessage::Shutdown => {
-                        info!("Datetime actor '{}' shutting down", self.config.name);
-                        let _ = event_tx.send(DatetimeEvent::ShutdownComplete).await;
-                        // In a real system we might break the loop here if the executor supports it
+            let msg = message_rx.receive().await;
+            match msg {
+                DatetimeMessage::SetDate { year, month, day } => {
+                    if let Err(e) = self.set_date(year, month, day) {
+                        let _ = event_tx.send(DatetimeEvent::Error(e)).await;
+                    } else {
+                        let _ = event_tx.send(DatetimeEvent::StateChanged(self.state)).await;
                     }
                 }
-            } else {
-                // Periodic task (if any)
-                debug!("Datetime actor '{}' periodic tick", self.config.name);
+                DatetimeMessage::SetTime { hour, minute, second } => {
+                    if let Err(e) = self.set_time(hour, minute, second) {
+                        let _ = event_tx.send(DatetimeEvent::Error(e)).await;
+                    } else {
+                        let _ = event_tx.send(DatetimeEvent::StateChanged(self.state)).await;
+                    }
+                }
+                DatetimeMessage::SetDateTime { year, month, day, hour, minute, second } => {
+                    if let Err(e) = self.set_datetime(year, month, day, hour, minute, second) {
+                        let _ = event_tx.send(DatetimeEvent::Error(e)).await;
+                    } else {
+                        let _ = event_tx.send(DatetimeEvent::StateChanged(self.state)).await;
+                    }
+                }
+                DatetimeMessage::GetState(response_tx) => {
+                    let _ = response_tx.send(Ok(self.state)).await;
+                }
+                DatetimeMessage::Shutdown => {
+                    info!("Datetime actor '{}' shutting down", self.config.name);
+                    let _ = event_tx.send(DatetimeEvent::ShutdownComplete).await;
+                }
             }
         }
     }
 
     fn set_date(&mut self, year: u16, month: u8, day: u8) -> Result<(), DatetimeError> {
-        if self.config.type_ == DatetimeType::Time {
-            return Err(DatetimeError::ConfigError);
-        }
         self.validate_date(year, month, day)?;
         self.state.year = Some(year);
         self.state.month = Some(month);
@@ -113,9 +87,6 @@ impl DatetimeActor {
     }
 
     fn set_time(&mut self, hour: u8, minute: u8, second: u8) -> Result<(), DatetimeError> {
-        if self.config.type_ == DatetimeType::Date {
-            return Err(DatetimeError::ConfigError);
-        }
         self.validate_time(hour, minute, second)?;
         self.state.hour = Some(hour);
         self.state.minute = Some(minute);
@@ -125,9 +96,6 @@ impl DatetimeActor {
     }
 
     fn set_datetime(&mut self, year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Result<(), DatetimeError> {
-        if self.config.type_ != DatetimeType::Datetime {
-            return Err(DatetimeError::ConfigError);
-        }
         self.validate_date(year, month, day)?;
         self.validate_time(hour, minute, second)?;
         self.state.year = Some(year);

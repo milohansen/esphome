@@ -5,7 +5,7 @@ use embassy_executor::Spawner;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use datetime_component::{
-    DatetimeActor, DatetimeConfig, DatetimeMessage, DatetimeEvent, DatetimeType
+    DatetimeActor, DatetimeConfig, DatetimeMessage, DatetimeEvent
 };
 use esp_backtrace as _;
 use esp_println::println;
@@ -28,7 +28,6 @@ async fn main(spawner: Spawner) {
 
     let mut config = DatetimeConfig::default();
     config.name = "Test Datetime".into();
-    config.type_ = DatetimeType::Datetime;
 
     let actor = DatetimeActor::new(config);
     spawner.spawn(datetime_task(actor, MSG_CHANNEL.receiver(), EVT_CHANNEL.sender())).unwrap();
