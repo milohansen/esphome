@@ -370,6 +370,10 @@ static const char ESPHOME_COMMENT_STR[] = "{escaped_comment}";
 
 
 def write_cpp(code_s):
+    if CORE.is_esp32_c3:
+        from esphome.rust_generator import write_rust_project
+        write_rust_project()
+
     path = CORE.relative_src_path("main.cpp")
     if path.is_file():
         text = read_file(path)

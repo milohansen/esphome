@@ -43,6 +43,7 @@ from esphome.cpp_generator import (  # noqa: F401
     variable,
     with_local_variable,
 )
+from esphome.core import CORE
 from esphome.cpp_helpers import (  # noqa: F401
     build_registry_entry,
     build_registry_list,
@@ -52,6 +53,10 @@ from esphome.cpp_helpers import (  # noqa: F401
     register_component,
     register_parented,
 )
+
+
+def mark_as_rust(var):
+    CORE.rust_component_ids.append(str(var.base))
 from esphome.cpp_types import (  # noqa: F401
     NAN,
     App,

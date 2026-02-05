@@ -119,6 +119,13 @@ class PinRegistry(dict):
                         final_val_fun(pin_config, parent_config)
                     allow_others = pin_config.get(CONF_ALLOW_OTHER_USES, False)
                     if count != 1 and not allow_others and not CORE.testing_mode:
+                        # Check for Dual HAL conflict
+                        is_rust = [str(cid) in CORE.rust_component_ids for _, cid, _ in pin_list]
+                        if any(is_rust) and not all(is_rust):
+                             raise cv.Invalid(
+                                f"Pin {pin_config[CONF_NUMBER]} is used by both Rust and C++ components. "
+                                "This is prohibited by Dual HAL rules."
+                            )
                         raise cv.Invalid(
                             f"Pin {pin_config[CONF_NUMBER]} is used in multiple places"
                         )
